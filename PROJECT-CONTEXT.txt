@@ -113,6 +113,8 @@ Core Features
   - Current implementation stores the best completed run per preset as that preset's Room-backed personal best.
   - If a loaded preset has no saved run/PB, right-side split comparison times show `--`.
   - If a loaded preset has a saved run/PB, right-side split comparison times show that saved run's split times.
+  - If a split row has no saved PB time, completing that split during the current run temporarily shows the current run's split time in that row; resetting an unfinished run returns it to `--`.
+  - If a completed run fills previously untimed PB rows, that run is saved as the new PB for the edited/current preset.
   - During a new run against a preset with a saved PB, completed rows show a `+/-` delta next to the PB split time.
   - Updating a preset definition with the same name clears any saved run for that preset if the preset changes in a way that cannot be mapped to the old PB.
   - If an edited preset keeps the same first and last split names in the first/last positions, preserve the old PB by mapping matching split names and showing `--` for inserted or otherwise untimed new splits.
@@ -216,3 +218,4 @@ Change Log
 - 2026-05-10: Added settings tabs for create vs edit preset and enlarged preset-row action areas so buttons render fully.
 - 2026-05-10: Changed row edit controls to arrow/X symbols and reordered row color cycling into a rainbow sequence with white.
 - 2026-05-10: Preserved PBs across compatible preset edits where first/last splits remain anchored, using `--` for newly inserted or unmapped split rows.
+- 2026-05-10: Made untimed PB rows show current-run split times after splitting and save a full completed run when those missing PB rows are filled.

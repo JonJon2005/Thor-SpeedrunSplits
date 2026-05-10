@@ -601,6 +601,7 @@ private fun ThorSpeedrunSplitsApp() {
                             if (
                                 currentBest == null ||
                                 currentBest.splitTimes.size != completedRun.splitTimes.size ||
+                                currentBest.splitTimes.any { it == null } ||
                                 completedRun.finalTime < currentBest.finalTime
                             ) {
                                 savedRuns[activePreset.presetName] = completedRun
@@ -1106,6 +1107,8 @@ private fun SplitList(
             key = { _, split -> split.name }
         ) { index, split ->
             val personalBestTime = displayedComparisonRun?.splitTimes?.getOrNull(index)
+            val currentRunTime = completedTimes[index]
+            val displayedTime = personalBestTime ?: currentRunTime
             val deltaMillis = completedTimes[index]?.let { completedTime ->
                 runComparison?.splitTimes?.getOrNull(index)?.let { comparisonTime ->
                     completedTime - comparisonTime
@@ -1113,8 +1116,8 @@ private fun SplitList(
             }
             SplitRow(
                 split = split,
-                comparisonTime = personalBestTime?.let(::formatSeconds) ?: "--",
-                hasComparisonTime = personalBestTime != null,
+                comparisonTime = displayedTime?.let(::formatSeconds) ?: "--",
+                hasComparisonTime = displayedTime != null,
                 deltaText = deltaMillis?.let(::formatDeltaSeconds),
                 deltaColor = deltaMillis?.let {
                     if (it <= 0L) SuccessGreen else BehindRed
