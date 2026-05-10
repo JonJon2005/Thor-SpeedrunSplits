@@ -75,11 +75,14 @@ Core Features
 - Settings panel:
   - A top-right simple gear icon button toggles a settings panel.
   - The panel uses the same dark/no-gradient visual style.
-  - When open, the settings panel should dim the app behind it and take up almost the full screen.
+  - When open, the settings panel should dim the app behind it and take up the full screen.
   - When open, the floating `SET` button should not overlap the panel; the panel should have an `X` close button in its top-right corner.
   - Settings panel scrollable content should use the full panel width.
-  - Each preset row in settings should include a `CLEAR PB` action that deletes that preset's saved personal best without deleting the preset.
-  - Current implementation uses full-width settings scroll content and exposes `CLEAR PB` beside each preset's load/delete actions.
+  - Preset rows should not cut off names; use two-line rows with compact actions for `LOAD`, `EDIT`, `CLR PB`, and `DEL`.
+  - Preset row action buttons must have enough vertical room to display labels fully.
+  - Each preset row in settings should include a compact clear-PB action that deletes that preset's saved personal best without deleting the preset.
+  - Create preset and edit-selected-preset workflows should be visually separate and controlled by tabs so only one form is shown at a time.
+  - Row editor controls should use arrows for move up/down and `X` for row deletion.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
@@ -87,6 +90,8 @@ Core Features
   - Example categories include `Any%`, `100%`, and other speedrun category names.
   - Users should be able to load a preset to run against that split layout.
   - Current implementation supports Room-backed preset creation, saved preset selection/loading, row add/remove, row name editing, row color cycling, and reset to the default example preset.
+  - Current implementation supports editing a selected custom preset from settings, including changing game/category, editing row names/colors, adding rows, deleting rows, and moving rows up/down.
+  - Row color cycling follows a rainbow-like order and includes white as a color option.
   - Loading a preset updates the main timer title/category/rows and resets the active test run.
   - Saved non-default presets can be deleted from the settings panel.
   - The default example preset cannot be deleted; deleting the active custom preset returns the app to the default preset and resets the current test run.
@@ -109,7 +114,8 @@ Core Features
   - If a loaded preset has no saved run/PB, right-side split comparison times show `--`.
   - If a loaded preset has a saved run/PB, right-side split comparison times show that saved run's split times.
   - During a new run against a preset with a saved PB, completed rows show a `+/-` delta next to the PB split time.
-  - Updating a preset definition with the same name clears any saved run for that preset if the preset content changes.
+  - Updating a preset definition with the same name clears any saved run for that preset if the preset changes in a way that cannot be mapped to the old PB.
+  - If an edited preset keeps the same first and last split names in the first/last positions, preserve the old PB by mapping matching split names and showing `--` for inserted or otherwise untimed new splits.
   - PB persistence currently uses preset name as the Room key; preset definitions themselves are still session-local until preset persistence is implemented.
 - LiveSplit concepts to understand before feature planning:
   - A run is divided into ordered segments/splits.
@@ -206,3 +212,7 @@ Change Log
 - 2026-05-10: Added subtle hardware vibration feedback for custom button presses and declared the Android vibrate permission.
 - 2026-05-10: Made the bottom `SPLIT` and `RESET` controls square and slightly shorter.
 - 2026-05-10: Reduced square run-control label size/padding so button words fit fully inside the controls.
+- 2026-05-10: Redesigned settings as a fullscreen panel with compact preset rows and separate create/edit sections; added selected custom preset editing with row add/delete/reorder controls.
+- 2026-05-10: Added settings tabs for create vs edit preset and enlarged preset-row action areas so buttons render fully.
+- 2026-05-10: Changed row edit controls to arrow/X symbols and reordered row color cycling into a rainbow sequence with white.
+- 2026-05-10: Preserved PBs across compatible preset edits where first/last splits remain anchored, using `--` for newly inserted or unmapped split rows.

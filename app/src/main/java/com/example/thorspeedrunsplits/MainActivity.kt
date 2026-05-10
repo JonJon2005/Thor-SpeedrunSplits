@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -95,7 +96,7 @@ private data class SplitPreset(
 
 private data class Run(
     val presetName: String,
-    val splitTimes: List<Long>,
+    val splitTimes: List<Long?>,
     val finalTime: Long
 )
 
@@ -105,11 +106,12 @@ private data class PresetStats(
 )
 
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
+private const val UntimedSplitSentinel = -1L
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
     return PersonalBestRunEntity(
         presetName = presetName,
-        splitTimesMillis = splitTimes,
+        splitTimesMillis = splitTimes.map { it ?: UntimedSplitSentinel },
         finalTimeMillis = finalTime,
         updatedAtMillis = System.currentTimeMillis()
     )
@@ -118,9 +120,59 @@ private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
 private fun PersonalBestRunEntity.toRun(): Run {
     return Run(
         presetName = presetName,
-        splitTimes = splitTimesMillis,
+        splitTimes = splitTimesMillis.map { it.takeIf { splitTime -> splitTime >= 0L } },
         finalTime = finalTimeMillis
     )
+}
+
+private fun migrateRunForEditedPreset(
+    oldPreset: SplitPreset,
+    editedPreset: SplitPreset,
+    run: Run
+): Run? {
+    if (
+        oldPreset.segments.isEmpty() ||
+        editedPreset.segments.isEmpty() ||
+        run.splitTimes.size != oldPreset.segments.size
+    ) {
+        return null
+    }
+
+    val oldFirst = oldPreset.segments.first().name
+    val oldLast = oldPreset.segments.last().name
+    val editedFirst = editedPreset.segments.first().name
+    val editedLast = editedPreset.segments.last().name
+    if (oldFirst != editedFirst || oldLast != editedLast) {
+        return null
+    }
+
+    val usedOldIndices = BooleanArray(oldPreset.segments.size)
+    val migratedSplitTimes = editedPreset.segments.mapIndexed { index, segment ->
+        when (index) {
+            0 -> {
+                usedOldIndices[0] = true
+                run.splitTimes.firstOrNull()
+            }
+            editedPreset.segments.lastIndex -> {
+                val oldLastIndex = oldPreset.segments.lastIndex
+                usedOldIndices[oldLastIndex] = true
+                run.splitTimes.getOrNull(oldLastIndex)
+            }
+            else -> {
+                val oldIndex = oldPreset.segments.indices.firstOrNull { oldIndex ->
+                    !usedOldIndices[oldIndex] && oldPreset.segments[oldIndex].name == segment.name
+                }
+                if (oldIndex != null) {
+                    usedOldIndices[oldIndex] = true
+                    run.splitTimes.getOrNull(oldIndex)
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    return run.copy(splitTimes = migratedSplitTimes)
 }
 
 private fun SplitPreset.toSplitPresetEntity(stats: PresetStats = PresetStats()): SplitPresetEntity {
@@ -170,17 +222,26 @@ private fun SplitPresetEntity.toPresetStats(): PresetStats {
 }
 
 private val PresetColors = listOf(
-    Color(0xFFFF6A2A),
-    Color(0xFFFFB13B),
-    Color(0xFF3B70FF),
-    Color(0xFF25D8A0),
-    Color(0xFFB76DFF),
-    Color(0xFFFF4FA3),
+    Color(0xFFFF4040),
+    Color(0xFFFF7A2F),
+    Color(0xFFFFD33D),
+    Color(0xFF65E36F),
+    Color(0xFF24D8A8),
     Color(0xFF37D5FF),
-    Color(0xFFE6D84A),
-    Color(0xFF8BE36E),
-    Color(0xFFFF8E3D)
+    Color(0xFF3B70FF),
+    Color(0xFF8F5CFF),
+    Color(0xFFFF4FA3),
+    Color(0xFFF6F6F6)
 )
+
+private fun nextPresetColor(currentColor: Color): Color {
+    val currentIndex = PresetColors.indexOf(currentColor)
+    return if (currentIndex >= 0) {
+        PresetColors[(currentIndex + 1) % PresetColors.size]
+    } else {
+        PresetColors.first()
+    }
+}
 
 private val DefaultPreset = SplitPreset(
     presetName = "Default Example",
@@ -264,6 +325,7 @@ private fun ThorSpeedrunSplitsApp() {
     var resetScrollRequest by remember { mutableStateOf(0) }
     var isSettingsOpen by remember { mutableStateOf(false) }
     var activePreset by remember { mutableStateOf(DefaultPreset) }
+    var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
     }
@@ -286,6 +348,11 @@ private fun ThorSpeedrunSplitsApp() {
             )
         }
     }
+    var editTargetPresetName by remember { mutableStateOf<String?>(null) }
+    var editGameTitle by remember { mutableStateOf("") }
+    var editCategory by remember { mutableStateOf("") }
+    var nextEditSegmentId by remember { mutableStateOf(0) }
+    val editSegments = remember { mutableStateListOf<DraftSplitSegment>() }
     var startedAtMillis by remember { mutableLongStateOf(0L) }
     var finishedElapsedMillis by remember { mutableLongStateOf(0L) }
     var nowMillis by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
@@ -323,6 +390,23 @@ private fun ThorSpeedrunSplitsApp() {
                 )
             )
         }
+    }
+
+    fun startEditingPreset(preset: SplitPreset) {
+        editTargetPresetName = preset.presetName
+        editGameTitle = preset.gameTitle
+        editCategory = preset.category
+        editSegments.clear()
+        editSegments.addAll(
+            preset.segments.mapIndexed { index, segment ->
+                DraftSplitSegment(
+                    id = index,
+                    name = segment.name,
+                    markerColor = segment.markerColor
+                )
+            }
+        )
+        nextEditSegmentId = preset.segments.size
     }
 
     LaunchedEffect(personalBestRunDao, splitPresetDao, appPreferenceDao) {
@@ -589,6 +673,8 @@ private fun ThorSpeedrunSplitsApp() {
                     onClose = { isSettingsOpen = false },
                     savedPresets = savedPresets,
                     activePreset = activePreset,
+                    selectedTab = presetSettingsTab,
+                    onSelectedTabChange = { presetSettingsTab = it },
                     draftPresetName = draftPresetName,
                     onDraftPresetNameChange = { draftPresetName = it },
                     draftGameTitle = draftGameTitle,
@@ -601,12 +687,24 @@ private fun ThorSpeedrunSplitsApp() {
                     },
                     onCycleDraftSegmentColor = { index ->
                         val currentColor = draftSegments[index].markerColor
-                        val nextColor = PresetColors[
-                            (PresetColors.indexOf(currentColor).takeIf { it >= 0 } ?: 0)
-                                .plus(1)
-                                .mod(PresetColors.size)
-                        ]
-                        draftSegments[index] = draftSegments[index].copy(markerColor = nextColor)
+                        draftSegments[index] = draftSegments[index].copy(
+                            markerColor = nextPresetColor(currentColor)
+                        )
+                    },
+                    onMoveDraftSegmentUp = { index ->
+                        if (index > 0) {
+                            draftSegments.add(index - 1, draftSegments.removeAt(index))
+                        }
+                    },
+                    onMoveDraftSegmentDown = { index ->
+                        if (index < draftSegments.lastIndex) {
+                            draftSegments.add(index + 1, draftSegments.removeAt(index))
+                        }
+                    },
+                    onDeleteDraftSegment = { index ->
+                        if (draftSegments.size > 1) {
+                            draftSegments.removeAt(index)
+                        }
                     },
                     onAddDraftSegment = {
                         val nextIndex = draftSegments.size
@@ -618,11 +716,6 @@ private fun ThorSpeedrunSplitsApp() {
                             )
                         )
                         nextDraftSegmentId += 1
-                    },
-                    onRemoveDraftSegment = {
-                        if (draftSegments.size > 1) {
-                            draftSegments.removeAt(draftSegments.lastIndex)
-                        }
                     },
                     onSaveDraftPreset = {
                         val preset = SplitPreset(
@@ -662,6 +755,116 @@ private fun ThorSpeedrunSplitsApp() {
                         }
                         loadPreset(preset)
                     },
+                    editTargetPresetName = editTargetPresetName,
+                    editGameTitle = editGameTitle,
+                    onEditGameTitleChange = { editGameTitle = it },
+                    editCategory = editCategory,
+                    onEditCategoryChange = { editCategory = it },
+                    editSegments = editSegments,
+                    onStartEditPreset = { preset ->
+                        if (preset.presetName != DefaultPreset.presetName) {
+                            startEditingPreset(preset)
+                            presetSettingsTab = PresetSettingsTab.Edit
+                        }
+                    },
+                    onEditSegmentNameChange = { index, name ->
+                        editSegments[index] = editSegments[index].copy(name = name)
+                    },
+                    onCycleEditSegmentColor = { index ->
+                        val currentColor = editSegments[index].markerColor
+                        editSegments[index] = editSegments[index].copy(
+                            markerColor = nextPresetColor(currentColor)
+                        )
+                    },
+                    onMoveEditSegmentUp = { index ->
+                        if (index > 0) {
+                            editSegments.add(index - 1, editSegments.removeAt(index))
+                        }
+                    },
+                    onMoveEditSegmentDown = { index ->
+                        if (index < editSegments.lastIndex) {
+                            editSegments.add(index + 1, editSegments.removeAt(index))
+                        }
+                    },
+                    onDeleteEditSegment = { index ->
+                        if (editSegments.size > 1) {
+                            editSegments.removeAt(index)
+                        }
+                    },
+                    onAddEditSegment = {
+                        val nextIndex = editSegments.size
+                        editSegments.add(
+                            DraftSplitSegment(
+                                id = nextEditSegmentId,
+                                name = "Split ${nextIndex + 1}",
+                                markerColor = PresetColors[nextIndex % PresetColors.size]
+                            )
+                        )
+                        nextEditSegmentId += 1
+                    },
+                    onSaveEditedPreset = {
+                        val targetPresetName = editTargetPresetName
+                        if (targetPresetName != null) {
+                            val existingIndex = savedPresets.indexOfFirst {
+                                it.presetName == targetPresetName
+                            }
+                            if (existingIndex >= 0 && targetPresetName != DefaultPreset.presetName) {
+                                val editedPreset = SplitPreset(
+                                    presetName = targetPresetName,
+                                    gameTitle = editGameTitle.ifBlank { "Game" },
+                                    category = editCategory.ifBlank { "Any%" },
+                                    segments = editSegments.mapIndexed { index, segment ->
+                                        SplitSegment(
+                                            name = segment.name.ifBlank { "Split ${index + 1}" },
+                                            markerColor = segment.markerColor
+                                        )
+                                    }
+                                )
+                                val oldPreset = savedPresets[existingIndex]
+                                if (oldPreset != editedPreset) {
+                                    val migratedRun = savedRuns[targetPresetName]?.let { run ->
+                                        migrateRunForEditedPreset(
+                                            oldPreset = oldPreset,
+                                            editedPreset = editedPreset,
+                                            run = run
+                                        )
+                                    }
+                                    if (migratedRun != null) {
+                                        savedRuns[targetPresetName] = migratedRun
+                                        if (runComparison?.presetName == targetPresetName) {
+                                            runComparison = migratedRun
+                                        }
+                                        coroutineScope.launch {
+                                            personalBestRunDao.upsert(
+                                                migratedRun.toPersonalBestRunEntity()
+                                            )
+                                        }
+                                    } else {
+                                        savedRuns.remove(targetPresetName)
+                                        if (runComparison?.presetName == targetPresetName) {
+                                            runComparison = null
+                                        }
+                                        coroutineScope.launch {
+                                            personalBestRunDao.deleteByPresetName(targetPresetName)
+                                        }
+                                    }
+                                }
+                                savedPresets[existingIndex] = editedPreset
+                                val currentStats = presetStats[targetPresetName] ?: PresetStats()
+                                presetStats[targetPresetName] = currentStats
+                                coroutineScope.launch {
+                                    splitPresetDao.upsertWithSegments(
+                                        preset = editedPreset.toSplitPresetEntity(currentStats),
+                                        segments = editedPreset.toSplitPresetSegmentEntities()
+                                    )
+                                }
+                                if (activePreset.presetName == targetPresetName) {
+                                    activePreset = editedPreset
+                                    resetRun(editedPreset.segments.size)
+                                }
+                            }
+                        }
+                    },
                     onLoadPreset = ::loadPreset,
                     onClearPersonalBest = { preset ->
                         savedRuns.remove(preset.presetName)
@@ -685,6 +888,10 @@ private fun ThorSpeedrunSplitsApp() {
                                 coroutineScope.launch {
                                     personalBestRunDao.deleteByPresetName(preset.presetName)
                                     splitPresetDao.deleteByPresetName(preset.presetName)
+                                }
+                                if (editTargetPresetName == preset.presetName) {
+                                    editTargetPresetName = null
+                                    editSegments.clear()
                                 }
                             }
                             if (deletedActivePreset) {
@@ -711,7 +918,6 @@ private fun ThorSpeedrunSplitsApp() {
                     },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 36.dp, vertical = 32.dp)
                 )
             }
 
@@ -744,6 +950,11 @@ private data class ButtonSize(
     val width: Dp,
     val height: Dp
 )
+
+private enum class PresetSettingsTab {
+    Create,
+    Edit
+}
 
 @Composable
 private fun rememberButtonVibration(): () -> Unit {
@@ -1133,6 +1344,8 @@ private fun SettingsPanel(
     onClose: () -> Unit,
     savedPresets: List<SplitPreset>,
     activePreset: SplitPreset,
+    selectedTab: PresetSettingsTab,
+    onSelectedTabChange: (PresetSettingsTab) -> Unit,
     draftPresetName: String,
     onDraftPresetNameChange: (String) -> Unit,
     draftGameTitle: String,
@@ -1142,119 +1355,299 @@ private fun SettingsPanel(
     draftSegments: List<DraftSplitSegment>,
     onDraftSegmentNameChange: (Int, String) -> Unit,
     onCycleDraftSegmentColor: (Int) -> Unit,
+    onMoveDraftSegmentUp: (Int) -> Unit,
+    onMoveDraftSegmentDown: (Int) -> Unit,
+    onDeleteDraftSegment: (Int) -> Unit,
     onAddDraftSegment: () -> Unit,
-    onRemoveDraftSegment: () -> Unit,
     onSaveDraftPreset: () -> Unit,
+    editTargetPresetName: String?,
+    editGameTitle: String,
+    onEditGameTitleChange: (String) -> Unit,
+    editCategory: String,
+    onEditCategoryChange: (String) -> Unit,
+    editSegments: List<DraftSplitSegment>,
+    onStartEditPreset: (SplitPreset) -> Unit,
+    onEditSegmentNameChange: (Int, String) -> Unit,
+    onCycleEditSegmentColor: (Int) -> Unit,
+    onMoveEditSegmentUp: (Int) -> Unit,
+    onMoveEditSegmentDown: (Int) -> Unit,
+    onDeleteEditSegment: (Int) -> Unit,
+    onAddEditSegment: () -> Unit,
+    onSaveEditedPreset: () -> Unit,
     onLoadPreset: (SplitPreset) -> Unit,
     onClearPersonalBest: (SplitPreset) -> Unit,
     onDeletePreset: (SplitPreset) -> Unit,
     onResetDefault: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Column(
         modifier = modifier
-            .background(Color(0xFF080808))
-            .border(width = 1.dp, color = DividerColor)
+            .background(Color(0xFF050505))
     ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .background(Color(0xFF080808))
+                .border(width = 0.5.dp, color = DividerColor)
+                .padding(start = 24.dp, end = 14.dp)
+        ) {
+            Text(
+                text = "Split Presets",
+                color = PrimaryText,
+                fontSize = 24.sp,
+                lineHeight = 24.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            CloseButton(
+                onClick = onClose,
+                modifier = Modifier.size(52.dp)
+            )
+        }
+
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 22.dp)
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
             item {
-                Text(
-                    text = "Split Presets",
-                    color = PrimaryText,
-                    fontSize = 24.sp,
-                    lineHeight = 24.sp,
-                    maxLines = 1
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-            }
-
-            item {
-                SettingsSectionTitle("Load Preset")
+                SettingsSectionTitle("Presets")
                 savedPresets.forEach { preset ->
                     PresetLoadRow(
                         preset = preset,
                         isActive = preset.presetName == activePreset.presetName,
+                        isEditing = preset.presetName == editTargetPresetName,
                         canDelete = preset.presetName != DefaultPreset.presetName,
                         onLoad = { onLoadPreset(preset) },
+                        onEdit = { onStartEditPreset(preset) },
                         onClearPersonalBest = { onClearPersonalBest(preset) },
                         onDelete = { onDeletePreset(preset) }
                     )
                 }
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                SettingsModeTabs(
+                    selectedTab = selectedTab,
+                    onSelectedTabChange = onSelectedTabChange
+                )
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            item {
-                SettingsSectionTitle("Create Preset")
-                LabeledTextInput(
-                    label = "Preset Name",
-                    value = draftPresetName,
-                    onValueChange = onDraftPresetNameChange
-                )
-                LabeledTextInput(
-                    label = "Game Title",
-                    value = draftGameTitle,
-                    onValueChange = onDraftGameTitleChange
-                )
-                LabeledTextInput(
-                    label = "Category",
-                    value = draftCategory,
-                    onValueChange = onDraftCategoryChange
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-            }
+            if (selectedTab == PresetSettingsTab.Create) {
+                item {
+                    SettingsSectionTitle("Create New")
+                    LabeledTextInput(
+                        label = "Preset Name",
+                        value = draftPresetName,
+                        onValueChange = onDraftPresetNameChange
+                    )
+                    LabeledTextInput(
+                        label = "Game Title",
+                        value = draftGameTitle,
+                        onValueChange = onDraftGameTitleChange
+                    )
+                    LabeledTextInput(
+                        label = "Category",
+                        value = draftCategory,
+                        onValueChange = onDraftCategoryChange
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
 
-            itemsIndexed(
-                items = draftSegments,
-                key = { _, segment -> segment.id }
-            ) { index, segment ->
-                DraftSegmentRow(
-                    index = index,
-                    segment = segment,
-                    onNameChange = { onDraftSegmentNameChange(index, it) },
-                    onCycleColor = { onCycleDraftSegmentColor(index) }
-                )
-            }
+                itemsIndexed(
+                    items = draftSegments,
+                    key = { _, segment -> "draft-${segment.id}" }
+                ) { index, segment ->
+                    EditableSegmentRow(
+                        index = index,
+                        segment = segment,
+                        onNameChange = { onDraftSegmentNameChange(index, it) },
+                        onCycleColor = { onCycleDraftSegmentColor(index) },
+                        canMoveUp = index > 0,
+                        canMoveDown = index < draftSegments.lastIndex,
+                        canDelete = draftSegments.size > 1,
+                        onMoveUp = { onMoveDraftSegmentUp(index) },
+                        onMoveDown = { onMoveDraftSegmentDown(index) },
+                        onDelete = { onDeleteDraftSegment(index) }
+                    )
+                }
 
-            item {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row {
-                    PanelTextButton(
-                        text = "+ ROW",
-                        onClick = onAddDraftSegment,
-                        modifier = Modifier.size(width = 112.dp, height = 46.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    PanelTextButton(
-                        text = "- ROW",
-                        onClick = onRemoveDraftSegment,
-                        modifier = Modifier.size(width = 112.dp, height = 46.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    PanelTextButton(
-                        text = "SAVE + LOAD",
-                        onClick = onSaveDraftPreset,
-                        modifier = Modifier.size(width = 172.dp, height = 46.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    PanelTextButton(
-                        text = "RESET DEFAULT",
-                        onClick = onResetDefault,
-                        modifier = Modifier.size(width = 190.dp, height = 46.dp)
-                    )
+                item {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row {
+                        PanelTextButton(
+                            text = "+ ROW",
+                            onClick = onAddDraftSegment,
+                            modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        PanelTextButton(
+                            text = "SAVE + LOAD",
+                            onClick = onSaveDraftPreset,
+                            modifier = Modifier.size(width = 138.dp, height = 40.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        PanelTextButton(
+                            text = "RESET DEFAULT",
+                            onClick = onResetDefault,
+                            modifier = Modifier.size(width = 148.dp, height = 40.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
+            } else {
+                item {
+                    SettingsSectionTitle("Edit Selected")
+                    if (editTargetPresetName == null) {
+                        Text(
+                            text = "Choose EDIT on a custom preset.",
+                            color = SecondaryText,
+                            fontSize = 15.sp,
+                            lineHeight = 15.sp,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                    } else {
+                        Text(
+                            text = editTargetPresetName,
+                            color = SuccessGreen,
+                            fontSize = 15.sp,
+                            lineHeight = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LabeledTextInput(
+                            label = "Game Title",
+                            value = editGameTitle,
+                            onValueChange = onEditGameTitleChange
+                        )
+                        LabeledTextInput(
+                            label = "Category",
+                            value = editCategory,
+                            onValueChange = onEditCategoryChange
+                        )
+                    }
+                }
+
+                if (editTargetPresetName != null) {
+                    itemsIndexed(
+                        items = editSegments,
+                        key = { _, segment -> "edit-${segment.id}" }
+                    ) { index, segment ->
+                        EditableSegmentRow(
+                            index = index,
+                            segment = segment,
+                            onNameChange = { onEditSegmentNameChange(index, it) },
+                            onCycleColor = { onCycleEditSegmentColor(index) },
+                            canMoveUp = index > 0,
+                            canMoveDown = index < editSegments.lastIndex,
+                            canDelete = editSegments.size > 1,
+                            onMoveUp = { onMoveEditSegmentUp(index) },
+                            onMoveDown = { onMoveEditSegmentDown(index) },
+                            onDelete = { onDeleteEditSegment(index) }
+                        )
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row {
+                            PanelTextButton(
+                                text = "+ ROW",
+                                onClick = onAddEditSegment,
+                                modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            PanelTextButton(
+                                text = "SAVE EDIT",
+                                onClick = onSaveEditedPreset,
+                                modifier = Modifier.size(width = 126.dp, height = 40.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                 }
             }
         }
+    }
+}
 
-        CloseButton(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(14.dp)
-                .size(56.dp)
+@Composable
+private fun SettingsModeTabs(
+    selectedTab: PresetSettingsTab,
+    onSelectedTabChange: (PresetSettingsTab) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .border(width = 1.dp, color = DividerColor)
+            .background(Color(0xFF070707))
+            .padding(4.dp)
+    ) {
+        SettingsTabButton(
+            text = "Create Preset",
+            selected = selectedTab == PresetSettingsTab.Create,
+            onClick = { onSelectedTabChange(PresetSettingsTab.Create) },
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        SettingsTabButton(
+            text = "Edit Preset",
+            selected = selectedTab == PresetSettingsTab.Edit,
+            onClick = { onSelectedTabChange(PresetSettingsTab.Edit) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun SettingsTabButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            isPressed -> Color(0xFF2A2A2A)
+            selected -> Color(0xFF102015)
+            else -> Color(0xFF101010)
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "settingsTabBackground"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) SuccessGreen else DividerColor,
+        animationSpec = tween(ButtonFadeMillis),
+        label = "settingsTabBorder"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .fillMaxHeight()
+            .background(backgroundColor)
+            .border(width = 1.dp, color = borderColor)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
+            )
+            .padding(horizontal = 8.dp)
+    ) {
+        FadingButtonText(
+            text = text,
+            color = if (selected) SuccessGreen else PrimaryText,
+            fontSize = 14.sp
         )
     }
 }
@@ -1275,54 +1668,85 @@ private fun SettingsSectionTitle(text: String) {
 private fun PresetLoadRow(
     preset: SplitPreset,
     isActive: Boolean,
+    isEditing: Boolean,
     canDelete: Boolean,
     onLoad: () -> Unit,
+    onEdit: () -> Unit,
     onClearPersonalBest: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
-            .border(width = 0.5.dp, color = if (isActive) SuccessGreen else DividerColor)
-            .background(if (isActive) Color(0xFF0D170D) else Color(0xFF0A0A0A))
-            .padding(horizontal = 12.dp)
+            .height(96.dp)
+            .border(
+                width = 0.75.dp,
+                color = when {
+                    isEditing -> SuccessGreen
+                    isActive -> Color(0xFF4A9EFF)
+                    else -> DividerColor
+                }
+            )
+            .background(if (isActive || isEditing) Color(0xFF0D1410) else Color(0xFF090909))
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Text(
-            text = "${preset.gameTitle} - ${preset.category}",
-            color = if (isActive) SuccessGreen else PrimaryText,
-            fontSize = 17.sp,
-            lineHeight = 17.sp,
-            maxLines = 1,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = "${preset.segments.size} rows",
-            color = SecondaryText,
-            fontSize = 14.sp,
-            lineHeight = 14.sp,
-            maxLines = 1
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        PanelTextButton(
-            text = "LOAD",
-            onClick = onLoad,
-            modifier = Modifier.size(width = 86.dp, height = 34.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        PanelTextButton(
-            text = "CLEAR PB",
-            onClick = onClearPersonalBest,
-            modifier = Modifier.size(width = 118.dp, height = 34.dp)
-        )
-        if (canDelete) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${preset.gameTitle} - ${preset.category}",
+                    color = if (isActive) SuccessGreen else PrimaryText,
+                    fontSize = 17.sp,
+                    lineHeight = 17.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${preset.presetName}  |  ${preset.segments.size} rows",
+                    color = SecondaryText,
+                    fontSize = 12.sp,
+                    lineHeight = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (isActive) {
+                Text(
+                    text = "LOADED",
+                    color = SuccessGreen,
+                    fontSize = 12.sp,
+                    lineHeight = 12.sp,
+                    maxLines = 1
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row {
+            PanelTextButton(
+                text = "LOAD",
+                onClick = onLoad,
+                modifier = Modifier.size(width = 76.dp, height = 34.dp)
+            )
             Spacer(modifier = Modifier.width(8.dp))
             PanelTextButton(
-                text = "DELETE",
-                onClick = onDelete,
-                modifier = Modifier.size(width = 104.dp, height = 34.dp)
+                text = "CLR PB",
+                onClick = onClearPersonalBest,
+                modifier = Modifier.size(width = 86.dp, height = 34.dp)
             )
+            if (canDelete) {
+                Spacer(modifier = Modifier.width(8.dp))
+                PanelTextButton(
+                    text = "EDIT",
+                    onClick = onEdit,
+                    modifier = Modifier.size(width = 76.dp, height = 34.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                PanelTextButton(
+                    text = "DEL",
+                    onClick = onDelete,
+                    modifier = Modifier.size(width = 64.dp, height = 34.dp)
+                )
+            }
         }
     }
     Spacer(modifier = Modifier.height(6.dp))
@@ -1362,11 +1786,17 @@ private fun LabeledTextInput(
 }
 
 @Composable
-private fun DraftSegmentRow(
+private fun EditableSegmentRow(
     index: Int,
     segment: DraftSplitSegment,
     onNameChange: (String) -> Unit,
-    onCycleColor: () -> Unit
+    onCycleColor: () -> Unit,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    canDelete: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -1407,6 +1837,27 @@ private fun DraftSegmentRow(
                 .border(width = 0.5.dp, color = DividerColor)
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         )
+        Spacer(modifier = Modifier.width(8.dp))
+        PanelTextButton(
+            text = "↑",
+            onClick = onMoveUp,
+            enabled = canMoveUp,
+            modifier = Modifier.size(width = 44.dp, height = 30.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        PanelTextButton(
+            text = "↓",
+            onClick = onMoveDown,
+            enabled = canMoveDown,
+            modifier = Modifier.size(width = 44.dp, height = 30.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        PanelTextButton(
+            text = "X",
+            onClick = onDelete,
+            enabled = canDelete,
+            modifier = Modifier.size(width = 50.dp, height = 30.dp)
+        )
     }
     Spacer(modifier = Modifier.height(6.dp))
 }
@@ -1445,18 +1896,27 @@ private fun ColorSwatchButton(
 private fun PanelTextButton(
     text: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
-        targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
+        targetValue = when {
+            !enabled -> Color(0xFF080808)
+            isPressed -> Color(0xFF2A2A2A)
+            else -> Color(0xFF101010)
+        },
         animationSpec = tween(ButtonFadeMillis),
         label = "panelButtonBackground"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isPressed) PrimaryText else DividerColor,
+        targetValue = when {
+            !enabled -> Color(0xFF1A1A1A)
+            isPressed -> PrimaryText
+            else -> DividerColor
+        },
         animationSpec = tween(ButtonFadeMillis),
         label = "panelButtonBorder"
     )
@@ -1467,6 +1927,7 @@ private fun PanelTextButton(
             .background(backgroundColor)
             .border(width = 1.5.dp, color = borderColor)
             .clickable(
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = {
@@ -1478,8 +1939,8 @@ private fun PanelTextButton(
     ) {
         FadingButtonText(
             text = text,
-            color = PrimaryText,
-            fontSize = 14.sp
+            color = if (enabled) PrimaryText else SecondaryText,
+            fontSize = 13.sp
         )
     }
 }
