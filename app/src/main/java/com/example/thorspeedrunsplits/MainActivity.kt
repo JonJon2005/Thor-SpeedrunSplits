@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,7 +38,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -58,7 +60,13 @@ private val ExampleSplits = listOf(
     SplitSegment("One", 1.0, Color(0xFFFF6A2A)),
     SplitSegment("Two", 2.0, Color(0xFFFFB13B)),
     SplitSegment("Three", 3.0, Color(0xFF3B70FF)),
-    SplitSegment("Four", 4.0, Color(0xFF25D8A0))
+    SplitSegment("Four", 4.0, Color(0xFF25D8A0)),
+    SplitSegment("Five", 5.0, Color(0xFFB76DFF)),
+    SplitSegment("Six", 6.0, Color(0xFFFF4FA3)),
+    SplitSegment("Seven", 7.0, Color(0xFF37D5FF)),
+    SplitSegment("Eight", 8.0, Color(0xFFE6D84A)),
+    SplitSegment("Nine", 9.0, Color(0xFF8BE36E)),
+    SplitSegment("Ten", 10.0, Color(0xFFFF8E3D))
 )
 
 private val OledBlack = Color(0xFF020202)
@@ -118,7 +126,6 @@ private fun ThorSpeedrunSplitsApp() {
             repeat(ExampleSplits.size) { add(null) }
         }
     }
-    val inspectionMode = LocalInspectionMode.current
 
     LaunchedEffect(isRunning) {
         while (isRunning) {
@@ -141,7 +148,7 @@ private fun ThorSpeedrunSplitsApp() {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(vertical = 12.dp)
         ) {
             val isWideThorShape = maxWidth > maxHeight
             val titleHeight = if (isWideThorShape) 82.dp else 92.dp
@@ -161,7 +168,9 @@ private fun ThorSpeedrunSplitsApp() {
                     game = "Game",
                     category = "Any%",
                     fontSize = titleSize,
-                    modifier = Modifier.height(titleHeight)
+                    modifier = Modifier
+                        .height(titleHeight)
+                        .padding(horizontal = 24.dp)
                 )
                 SplitList(
                     splits = ExampleSplits,
@@ -169,20 +178,31 @@ private fun ThorSpeedrunSplitsApp() {
                     activeSplitIndex = activeSplitIndex,
                     isFinished = isFinished,
                     rowHeight = rowHeight,
-                    rowTextSize = rowTextSize
+                    rowTextSize = rowTextSize,
+                    modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.weight(1f))
                 BottomControls(
-                    buttonEnabled = !isFinished || inspectionMode,
+                    buttonEnabled = true,
+                    buttonText = if (isFinished) "DONE" else "SPLIT",
                     buttonSize = splitButtonSize,
                     timerText = formatSeconds(elapsedMillis),
                     timerColor = if (isFinished) SuccessGreen else PrimaryText,
                     timerSize = timerSize,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(bottomHeight),
+                        .height(bottomHeight)
+                        .padding(horizontal = 24.dp),
                     onSplit = {
-                        if (isFinished) return@BottomControls
+                        if (isFinished) {
+                            isRunning = false
+                            isFinished = false
+                            activeSplitIndex = 0
+                            startedAtMillis = 0L
+                            finishedElapsedMillis = 0L
+                            nowMillis = SystemClock.elapsedRealtime()
+                            completedTimes.indices.forEach { completedTimes[it] = null }
+                            return@BottomControls
+                        }
 
                         val pressTime = SystemClock.elapsedRealtime()
                         if (!isRunning) {
@@ -255,8 +275,48 @@ private fun SplitList(
     rowTextSize: TextUnit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        splits.forEachIndexed { index, split ->
+    val listState = rememberLazyListState()
+    val oneAwayVisibleIndex = when {
+        splits.isEmpty() -> 0
+        isFinished -> activeSplitIndex.coerceIn(splits.indices)
+        activeSplitIndex < splits.lastIndex -> activeSplitIndex + 1
+        else -> activeSplitIndex
+    }
+
+    LaunchedEffect(oneAwayVisibleIndex) {
+        if (oneAwayVisibleIndex == 0) {
+            listState.animateScrollToItem(0)
+            return@LaunchedEffect
+        }
+
+        val layoutInfo = listState.layoutInfo
+        val viewportStart = layoutInfo.viewportStartOffset
+        val viewportEnd = layoutInfo.viewportEndOffset
+        val visibleItems = layoutInfo.visibleItemsInfo
+        val targetItem = visibleItems.firstOrNull { it.index == oneAwayVisibleIndex }
+        val isTargetFullyVisible = targetItem != null &&
+            targetItem.offset >= viewportStart &&
+            targetItem.offset + targetItem.size <= viewportEnd
+
+        if (!isTargetFullyVisible) {
+            val fullyVisibleRowCount = visibleItems.count { item ->
+                item.offset >= viewportStart && item.offset + item.size <= viewportEnd
+            }.coerceAtLeast(1)
+            val firstVisibleIndex = (oneAwayVisibleIndex - fullyVisibleRowCount + 1)
+                .coerceAtLeast(0)
+            listState.animateScrollToItem(firstVisibleIndex)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .fillMaxWidth()
+    ) {
+        itemsIndexed(
+            items = splits,
+            key = { _, split -> split.name }
+        ) { index, split ->
             SplitRow(
                 split = split,
                 displayTime = completedTimes[index]?.let(::formatSeconds)
@@ -323,6 +383,7 @@ private fun SplitRow(
 @Composable
 private fun BottomControls(
     buttonEnabled: Boolean,
+    buttonText: String,
     buttonSize: ButtonSize,
     timerText: String,
     timerColor: Color,
@@ -336,6 +397,7 @@ private fun BottomControls(
     ) {
         SplitButton(
             enabled = buttonEnabled,
+            text = buttonText,
             onSplit = onSplit,
             modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
         )
@@ -353,6 +415,7 @@ private fun BottomControls(
 @Composable
 private fun SplitButton(
     enabled: Boolean,
+    text: String,
     onSplit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -366,7 +429,7 @@ private fun SplitButton(
             .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
         Text(
-            text = if (enabled) "SPLIT" else "DONE",
+            text = text,
             color = if (enabled) PrimaryText else SecondaryText,
             fontSize = 28.sp,
             lineHeight = 28.sp,

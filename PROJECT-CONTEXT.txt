@@ -46,15 +46,21 @@ Design Language
   - Timer and split times use one decimal place with seconds suffix, such as `0.0s`.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
   - Use smaller row/title/timer typography on the wide 31:27 screen than on portrait phone previews.
+  - Split rows should use the full app width; title and bottom controls may keep side padding.
 
 Core Features
 -------------
 - Implemented initial prototype:
-  - Four example splits: `One`, `Two`, `Three`, `Four`.
+  - Ten example splits: `One` through `Ten`.
+  - Split rows are scrollable.
+  - Advancing splits only scrolls the row list when the row after the active split would otherwise be clipped or off screen.
+  - The active split should always have the next split one row away and fully visible when there is another split remaining.
+  - The runner may manually scroll back up through previous split rows if needed.
   - Large bottom-left `SPLIT` button.
   - Pressing `SPLIT` before a run starts begins the timer.
   - Pressing `SPLIT` while running records the current row's elapsed time and advances to the next row.
   - Pressing `SPLIT` on the final row records the final time and stops the timer.
+  - After the run finishes, the button label changes to `DONE`; pressing it resets the timer, split index, and completed row times for testing.
   - Completed row times replace the sample target time and are shown in green.
   - Final timer turns green when the run is finished.
   - Current layout reserves a bottom control band for the button and timer instead of absolutely overlaying them on top of rows.
@@ -103,3 +109,6 @@ Change Log
 - 2026-05-10: Implemented the initial LiveSplit-like Compose prototype with sample splits, large `SPLIT` button, one-decimal second timers, OLED black background, no gradients, and final-row timer stop behavior.
 - 2026-05-10: Fixed first-pass sizing issues by treating the display as a wide 31:27 surface, reducing type/row sizes, honoring safe drawing insets, and reserving separate vertical regions for title, rows, spacer, and bottom controls.
 - 2026-05-10: Switched the app to immersive fullscreen by hiding status and navigation bars, removing safe-area padding for system bars, and reapplying hidden bars on resume/focus.
+- 2026-05-10: Expanded example splits to ten rows, made split rows full-width, converted the split list to a scrollable region, and auto-scroll active/next split rows into view while still allowing manual scroll-back.
+- 2026-05-10: Changed split-list scrolling so it only moves when the active/next split is off screen, and made the finished-state `DONE` button reset the test run.
+- 2026-05-10: Refined split-list scrolling so it tracks the row after the active split; if that one-away next row is clipped or off screen, the list scrolls just enough to reveal it at the bottom of the visible row window.
