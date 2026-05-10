@@ -410,16 +410,15 @@ private fun ThorSpeedrunSplitsApp() {
             val titleSize = if (isWideThorShape) 22.sp else 24.sp
             val rowTextSize = if (isWideThorShape) 18.sp else 20.sp
             val timerSize = if (isWideThorShape) 54.sp else 62.sp
-            val splitButtonSize = if (isWideThorShape) {
-                ButtonSize(width = 150.dp, height = 104.dp)
-            } else {
-                ButtonSize(width = 144.dp, height = 120.dp)
-            }
-            val resetButtonSize = if (isWideThorShape) {
-                ButtonSize(width = 150.dp, height = 104.dp)
-            } else {
-                ButtonSize(width = 144.dp, height = 120.dp)
-            }
+            val bottomButtonSide = if (isWideThorShape) 100.dp else 112.dp
+            val splitButtonSize = ButtonSize(
+                width = bottomButtonSide,
+                height = bottomButtonSide
+            )
+            val resetButtonSize = ButtonSize(
+                width = bottomButtonSide,
+                height = bottomButtonSide
+            )
 
             Column(modifier = Modifier.fillMaxSize()) {
                 RunTitle(
@@ -1002,6 +1001,7 @@ private fun BottomControls(
             enabled = buttonEnabled,
             text = buttonText,
             onSplit = onSplit,
+            fontSize = 22.sp,
             modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
         )
         AnimatedVisibility(
@@ -1023,7 +1023,7 @@ private fun BottomControls(
                     enabled = true,
                     text = "RESET",
                     onSplit = onReset,
-                    fontSize = 24.sp,
+                    fontSize = 20.sp,
                     modifier = Modifier.size(
                         width = resetButtonSize.width,
                         height = resetButtonSize.height
@@ -1530,7 +1530,7 @@ private fun SplitButton(
     enabled: Boolean,
     text: String,
     onSplit: () -> Unit,
-    fontSize: TextUnit = 28.sp,
+    fontSize: TextUnit = 22.sp,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1581,7 +1581,7 @@ private fun SplitButton(
                     onSplit()
                 }
             )
-            .padding(horizontal = 16.dp, vertical = 16.dp)
+            .padding(horizontal = 8.dp, vertical = 12.dp)
     ) {
         FadingButtonText(
             text = text,
