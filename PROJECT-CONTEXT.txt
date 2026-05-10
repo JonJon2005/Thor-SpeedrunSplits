@@ -1,0 +1,105 @@
+Thor Speedrun Splits - Project Context
+=====================================
+
+Purpose
+-------
+- Build an open-source Android app for Thor speedrun split tracking.
+- Current app state: initial Compose prototype with LiveSplit-like sample rows, manual split button, and one-decimal timer.
+
+Workflow Rule
+-------------
+- Before starting future work in this repository, read this file first.
+- After each meaningful user request, update this file with new product direction, design language, technical decisions, and implementation status.
+- Keep this file concise and factual. Prefer durable project context over transient command logs.
+
+Product Direction
+-----------------
+- The app is specifically for the AYN Thor's bottom screen.
+- The app should take inspiration from LiveSplit's speedrun split-tracking workflow.
+- Initial implementation is allowed as of 2026-05-10 based on the user's request to create the app from the current context.
+
+Design Language
+---------------
+- Must account for the AYN Thor bottom screen: 1080x1240, 3.92 inch AMOLED, 60 Hz.
+- Treat the Thor bottom screen shape as 31:27 when laying out the app; avoid assuming a tall phone portrait layout.
+- User provided a LiveSplit-like reference direction: similar row structure, title at the top, main timer at the bottom, and labels/times aligned at the beginning and end of each row.
+- Layout should be glanceable and optimized for the small bottom display.
+- Reference image `livesplit_example.png` observations:
+  - Dark/near-black background with subtle row separators.
+  - Centered two-line title at the top, shown as game name plus category.
+  - Stacked split rows below the title.
+  - Each row has a small vertical color marker at the far left.
+  - Split label appears left-aligned after the marker.
+  - Split target/comparison time appears right-aligned in bold white.
+  - Main timer is large, bottom-right aligned, and visually dominant.
+  - Typography is high-contrast white/gray, compact, and built for quick glances.
+  - Rows use minimal decoration; the structure comes from alignment, spacing, separators, and color markers.
+- Planned layout addition from user:
+  - Use the empty bottom-left area for a large `SPLIT` button.
+  - Because the app is for the AYN Thor bottom touch screen, interactive touch targets must be large and easy to hit.
+  - The `SPLIT` button should coexist with the large bottom-right timer without crowding it.
+- Implemented visual constraints:
+  - No gradients.
+  - OLED-friendly near-black background.
+  - Fixed dark system bars and Compose dark theme with dynamic color disabled.
+  - App runs in immersive fullscreen: Android status bar and navigation/swipe bar should be hidden because the AYN Thor has physical/back-home controls available for this use case.
+  - Timer and split times use one decimal place with seconds suffix, such as `0.0s`.
+  - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
+  - Use smaller row/title/timer typography on the wide 31:27 screen than on portrait phone previews.
+
+Core Features
+-------------
+- Implemented initial prototype:
+  - Four example splits: `One`, `Two`, `Three`, `Four`.
+  - Large bottom-left `SPLIT` button.
+  - Pressing `SPLIT` before a run starts begins the timer.
+  - Pressing `SPLIT` while running records the current row's elapsed time and advances to the next row.
+  - Pressing `SPLIT` on the final row records the final time and stops the timer.
+  - Completed row times replace the sample target time and are shown in green.
+  - Final timer turns green when the run is finished.
+  - Current layout reserves a bottom control band for the button and timer instead of absolutely overlaying them on top of rows.
+- Custom splits are not implemented yet.
+- LiveSplit concepts to understand before feature planning:
+  - A run is divided into ordered segments/splits.
+  - A timer starts, advances through splits, can pause, reset, and finish.
+  - Split rows commonly show current split names, split times, deltas, and comparisons.
+  - Common comparisons include Personal Best and Best Segments.
+  - Runners care about glanceable timing state: current time, current segment, ahead/behind delta, PB context, and completed split history.
+  - Auto-splitting, game time, races, and speedrun.com integration exist in LiveSplit, but they are not approved features for this app yet.
+
+Technical Notes
+---------------
+- Android app.
+- Kotlin.
+- Jetpack Compose.
+- Gradle wrapper is included.
+- Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
+- License: MIT.
+- Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
+- System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
+- LiveSplit references:
+  - https://github.com/LiveSplit/LiveSplit
+  - https://livesplit.org/components/
+  - https://livesplit.org/livesplit-core-docs/classes/Timer.html
+  - https://livesplit.org/livesplit-core-docs/classes/Run.html
+
+Open Questions
+--------------
+- What specific Thor game or category should the app target first?
+- What split-timer workflows are required for the first usable version?
+- What visual style should the app follow?
+- Should the app target manual splitting only at first?
+- Should this app import/export LiveSplit `.lss` files later, or use its own local format?
+- Should the first `SPLIT` press continue to only start the timer, or should it also advance/record the first split in a future workflow?
+- Should the app include other large touch controls later, such as reset, undo split, pause, or settings?
+
+Change Log
+----------
+- 2026-05-09: Created this context file to track app goals, design language, feature direction, and technical decisions.
+- 2026-05-10: Added user direction that the app targets the AYN Thor bottom screen and should be informed by LiveSplit, while deferring all feature implementation until explicitly requested.
+- 2026-05-10: Added design direction for a LiveSplit-like layout: top title, split rows with labels and times at opposite ends, and main timer at the bottom. User said not to start implementation yet.
+- 2026-05-10: Examined `livesplit_example.png` and recorded its visible layout features: dark compact UI, centered title, stacked rows, left color markers, left labels, right times, and large bottom-right timer.
+- 2026-05-10: Added planned bottom-left large `SPLIT` button and large touch-target requirement for the Thor bottom touch screen.
+- 2026-05-10: Implemented the initial LiveSplit-like Compose prototype with sample splits, large `SPLIT` button, one-decimal second timers, OLED black background, no gradients, and final-row timer stop behavior.
+- 2026-05-10: Fixed first-pass sizing issues by treating the display as a wide 31:27 surface, reducing type/row sizes, honoring safe drawing insets, and reserving separate vertical regions for title, rows, spacer, and bottom controls.
+- 2026-05-10: Switched the app to immersive fullscreen by hiding status and navigation bars, removing safe-area padding for system bars, and reapplying hidden bars on resume/focus.
