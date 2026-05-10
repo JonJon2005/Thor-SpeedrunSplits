@@ -1,7 +1,12 @@
 package com.example.thorspeedrunsplits
 
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -32,7 +37,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -94,6 +99,13 @@ private data class Run(
     val finalTime: Long
 )
 
+private data class PresetStats(
+    val attemptedRuns: Int = 0,
+    val totalTimeMillis: Long = 0L
+)
+
+private const val LoadedPresetPreferenceKey = "loaded_preset_name"
+
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
     return PersonalBestRunEntity(
         presetName = presetName,
@@ -108,6 +120,52 @@ private fun PersonalBestRunEntity.toRun(): Run {
         presetName = presetName,
         splitTimes = splitTimesMillis,
         finalTime = finalTimeMillis
+    )
+}
+
+private fun SplitPreset.toSplitPresetEntity(stats: PresetStats = PresetStats()): SplitPresetEntity {
+    return SplitPresetEntity(
+        presetName = presetName,
+        gameTitle = gameTitle,
+        category = category,
+        attemptedRuns = stats.attemptedRuns,
+        totalTimeMillis = stats.totalTimeMillis,
+        updatedAtMillis = System.currentTimeMillis()
+    )
+}
+
+private fun SplitPreset.toSplitPresetSegmentEntities(): List<SplitPresetSegmentEntity> {
+    return segments.mapIndexed { index, segment ->
+        SplitPresetSegmentEntity(
+            presetName = presetName,
+            position = index,
+            name = segment.name,
+            markerColorArgb = segment.markerColor.toArgb()
+        )
+    }
+}
+
+private fun StoredSplitPreset.toSplitPreset(): SplitPreset? {
+    if (segments.isEmpty()) {
+        return null
+    }
+    return SplitPreset(
+        presetName = preset.presetName,
+        gameTitle = preset.gameTitle,
+        category = preset.category,
+        segments = segments.sortedBy { it.position }.map { segment ->
+            SplitSegment(
+                name = segment.name,
+                markerColor = Color(segment.markerColorArgb)
+            )
+        }
+    )
+}
+
+private fun SplitPresetEntity.toPresetStats(): PresetStats {
+    return PresetStats(
+        attemptedRuns = attemptedRuns,
+        totalTimeMillis = totalTimeMillis
     )
 }
 
@@ -150,6 +208,8 @@ private val SecondaryText = Color(0xFFC8C8C8)
 private val SuccessGreen = Color(0xFF65E38F)
 private val BehindRed = Color(0xFFFF7070)
 private const val ButtonFadeMillis = 280
+private const val ButtonVibrationMillis = 18L
+private const val ButtonVibrationAmplitude = 36
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -191,19 +251,24 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ThorSpeedrunSplitsApp() {
     val appContext = LocalContext.current.applicationContext
-    val personalBestRunDao = remember {
-        ThorSpeedrunDatabase.getInstance(appContext).personalBestRunDao()
+    val database = remember {
+        ThorSpeedrunDatabase.getInstance(appContext)
     }
+    val personalBestRunDao = remember(database) { database.personalBestRunDao() }
+    val splitPresetDao = remember(database) { database.splitPresetDao() }
+    val appPreferenceDao = remember(database) { database.appPreferenceDao() }
     val coroutineScope = rememberCoroutineScope()
     var isRunning by remember { mutableStateOf(false) }
     var isFinished by remember { mutableStateOf(false) }
     var activeSplitIndex by remember { mutableStateOf(0) }
+    var resetScrollRequest by remember { mutableStateOf(0) }
     var isSettingsOpen by remember { mutableStateOf(false) }
     var activePreset by remember { mutableStateOf(DefaultPreset) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
     }
     val savedRuns = remember { mutableStateMapOf<String, Run>() }
+    val presetStats = remember { mutableStateMapOf<String, PresetStats>() }
     var draftPresetName by remember { mutableStateOf("New Preset") }
     var draftGameTitle by remember { mutableStateOf(DefaultPreset.gameTitle) }
     var draftCategory by remember { mutableStateOf(DefaultPreset.category) }
@@ -224,17 +289,11 @@ private fun ThorSpeedrunSplitsApp() {
     var startedAtMillis by remember { mutableLongStateOf(0L) }
     var finishedElapsedMillis by remember { mutableLongStateOf(0L) }
     var nowMillis by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var persistedCurrentRunMillis by remember { mutableLongStateOf(0L) }
     var runComparison by remember { mutableStateOf<Run?>(null) }
     val completedTimes = remember {
         mutableStateListOf<Long?>().apply {
             repeat(DefaultPreset.segments.size) { add(null) }
-        }
-    }
-
-    LaunchedEffect(personalBestRunDao) {
-        savedRuns.clear()
-        personalBestRunDao.getAll().forEach { savedRun ->
-            savedRuns[savedRun.presetName] = savedRun.toRun()
         }
     }
 
@@ -245,20 +304,75 @@ private fun ThorSpeedrunSplitsApp() {
         startedAtMillis = 0L
         finishedElapsedMillis = 0L
         nowMillis = SystemClock.elapsedRealtime()
+        persistedCurrentRunMillis = 0L
         runComparison = null
         completedTimes.clear()
         repeat(segmentCount) { completedTimes.add(null) }
+        resetScrollRequest += 1
     }
 
     fun loadPreset(preset: SplitPreset) {
         activePreset = preset
         resetRun(preset.segments.size)
         isSettingsOpen = false
+        coroutineScope.launch {
+            appPreferenceDao.upsert(
+                AppPreferenceEntity(
+                    key = LoadedPresetPreferenceKey,
+                    value = preset.presetName
+                )
+            )
+        }
+    }
+
+    LaunchedEffect(personalBestRunDao, splitPresetDao, appPreferenceDao) {
+        splitPresetDao.ensurePresetExists(
+            preset = DefaultPreset.toSplitPresetEntity(),
+            segments = DefaultPreset.toSplitPresetSegmentEntities()
+        )
+
+        savedRuns.clear()
+        personalBestRunDao.getAll().forEach { savedRun ->
+            savedRuns[savedRun.presetName] = savedRun.toRun()
+        }
+
+        val storedPresetRows = splitPresetDao.getAllWithSegments()
+        presetStats.clear()
+        storedPresetRows.forEach { storedPreset ->
+            presetStats[storedPreset.preset.presetName] = storedPreset.preset.toPresetStats()
+        }
+        val storedPresets = storedPresetRows
+            .mapNotNull { it.toSplitPreset() }
+            .filter { it.presetName != DefaultPreset.presetName }
+        savedPresets.clear()
+        savedPresets.add(DefaultPreset)
+        savedPresets.addAll(storedPresets)
+
+        val loadedPresetName = appPreferenceDao.getValue(LoadedPresetPreferenceKey)
+        val restoredPreset = savedPresets.firstOrNull {
+            it.presetName == loadedPresetName
+        } ?: DefaultPreset
+        activePreset = restoredPreset
+        resetRun(restoredPreset.segments.size)
     }
 
     LaunchedEffect(isRunning) {
         while (isRunning) {
-            nowMillis = SystemClock.elapsedRealtime()
+            val currentTimeMillis = SystemClock.elapsedRealtime()
+            nowMillis = currentTimeMillis
+            val elapsedThisRun = currentTimeMillis - startedAtMillis
+            val elapsedSinceLastPersist = elapsedThisRun - persistedCurrentRunMillis
+            if (elapsedSinceLastPersist >= 1000L) {
+                val presetName = activePreset.presetName
+                val currentStats = presetStats[presetName] ?: PresetStats()
+                presetStats[presetName] = currentStats.copy(
+                    totalTimeMillis = currentStats.totalTimeMillis + elapsedSinceLastPersist
+                )
+                persistedCurrentRunMillis = elapsedThisRun
+                launch {
+                    splitPresetDao.addTotalTime(presetName, elapsedSinceLastPersist)
+                }
+            }
             delay(33L)
         }
     }
@@ -271,6 +385,13 @@ private fun ThorSpeedrunSplitsApp() {
     val savedRunForActivePreset = savedRuns[activePreset.presetName]
         ?.takeIf { it.splitTimes.size == activePreset.segments.size }
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
+    val activePresetStats = presetStats[activePreset.presetName] ?: PresetStats()
+    val liveUnpersistedRunMillis = if (isRunning) {
+        (elapsedMillis - persistedCurrentRunMillis).coerceAtLeast(0L)
+    } else {
+        0L
+    }
+    val displayedTotalTimeMillis = activePresetStats.totalTimeMillis + liveUnpersistedRunMillis
 
     Box(
         modifier = Modifier
@@ -290,9 +411,14 @@ private fun ThorSpeedrunSplitsApp() {
             val rowTextSize = if (isWideThorShape) 18.sp else 20.sp
             val timerSize = if (isWideThorShape) 54.sp else 62.sp
             val splitButtonSize = if (isWideThorShape) {
-                ButtonSize(width = 220.dp, height = 104.dp)
+                ButtonSize(width = 150.dp, height = 104.dp)
             } else {
-                ButtonSize(width = 210.dp, height = 120.dp)
+                ButtonSize(width = 144.dp, height = 120.dp)
+            }
+            val resetButtonSize = if (isWideThorShape) {
+                ButtonSize(width = 150.dp, height = 104.dp)
+            } else {
+                ButtonSize(width = 144.dp, height = 120.dp)
             }
 
             Column(modifier = Modifier.fillMaxSize()) {
@@ -310,6 +436,7 @@ private fun ThorSpeedrunSplitsApp() {
                     displayedComparisonRun = displayedComparisonRun,
                     runComparison = runComparison,
                     activeSplitIndex = activeSplitIndex,
+                    resetScrollRequest = resetScrollRequest,
                     isFinished = isFinished,
                     rowHeight = rowHeight,
                     rowTextSize = rowTextSize,
@@ -319,6 +446,8 @@ private fun ThorSpeedrunSplitsApp() {
                     buttonEnabled = true,
                     buttonText = if (isFinished) "DONE" else "SPLIT",
                     buttonSize = splitButtonSize,
+                    resetButtonSize = resetButtonSize,
+                    showResetButton = isRunning,
                     timerText = formatSeconds(elapsedMillis),
                     timerColor = if (isFinished) SuccessGreen else PrimaryText,
                     timerSize = timerSize,
@@ -334,10 +463,23 @@ private fun ThorSpeedrunSplitsApp() {
 
                         val pressTime = SystemClock.elapsedRealtime()
                         if (!isRunning) {
+                            val presetName = activePreset.presetName
+                            val currentStats = presetStats[presetName] ?: PresetStats()
+                            presetStats[presetName] = currentStats.copy(
+                                attemptedRuns = currentStats.attemptedRuns + 1
+                            )
+                            persistedCurrentRunMillis = 0L
                             runComparison = savedRunForActivePreset
                             isRunning = true
                             startedAtMillis = pressTime
                             nowMillis = pressTime
+                            coroutineScope.launch {
+                                splitPresetDao.ensurePresetExists(
+                                    preset = activePreset.toSplitPresetEntity(currentStats),
+                                    segments = activePreset.toSplitPresetSegmentEntities()
+                                )
+                                splitPresetDao.incrementAttemptedRuns(presetName)
+                            }
                             return@BottomControls
                         }
 
@@ -349,6 +491,18 @@ private fun ThorSpeedrunSplitsApp() {
                             isFinished = true
                             finishedElapsedMillis = splitElapsed
                             nowMillis = pressTime
+                            val remainingRunTime = splitElapsed - persistedCurrentRunMillis
+                            if (remainingRunTime > 0L) {
+                                val presetName = activePreset.presetName
+                                val currentStats = presetStats[presetName] ?: PresetStats()
+                                presetStats[presetName] = currentStats.copy(
+                                    totalTimeMillis = currentStats.totalTimeMillis + remainingRunTime
+                                )
+                                persistedCurrentRunMillis = splitElapsed
+                                coroutineScope.launch {
+                                    splitPresetDao.addTotalTime(presetName, remainingRunTime)
+                                }
+                            }
                             val completedRun = Run(
                                 presetName = activePreset.presetName,
                                 splitTimes = completedTimes.mapIndexed { index, time ->
@@ -375,9 +529,35 @@ private fun ThorSpeedrunSplitsApp() {
                             activeSplitIndex += 1
                             nowMillis = pressTime
                         }
+                    },
+                    onReset = {
+                        if (isRunning) {
+                            val resetTime = SystemClock.elapsedRealtime()
+                            val elapsedThisRun = resetTime - startedAtMillis
+                            val remainingRunTime = elapsedThisRun - persistedCurrentRunMillis
+                            if (remainingRunTime > 0L) {
+                                val presetName = activePreset.presetName
+                                val currentStats = presetStats[presetName] ?: PresetStats()
+                                presetStats[presetName] = currentStats.copy(
+                                    totalTimeMillis = currentStats.totalTimeMillis + remainingRunTime
+                                )
+                                coroutineScope.launch {
+                                    splitPresetDao.addTotalTime(presetName, remainingRunTime)
+                                }
+                            }
+                        }
+                        resetRun(activePreset.segments.size)
                     }
                 )
             }
+
+            PresetStatsPanel(
+                attemptedRuns = activePresetStats.attemptedRuns,
+                totalTimeText = formatDuration(displayedTotalTimeMillis),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 12.dp, start = 24.dp)
+            )
 
             AnimatedVisibility(
                 visible = isSettingsOpen,
@@ -471,9 +651,28 @@ private fun ThorSpeedrunSplitsApp() {
                         } else {
                             savedPresets.add(preset)
                         }
+                        if (preset.presetName != DefaultPreset.presetName) {
+                            val currentStats = presetStats[preset.presetName] ?: PresetStats()
+                            presetStats[preset.presetName] = currentStats
+                            coroutineScope.launch {
+                                splitPresetDao.upsertWithSegments(
+                                    preset = preset.toSplitPresetEntity(currentStats),
+                                    segments = preset.toSplitPresetSegmentEntities()
+                                )
+                            }
+                        }
                         loadPreset(preset)
                     },
                     onLoadPreset = ::loadPreset,
+                    onClearPersonalBest = { preset ->
+                        savedRuns.remove(preset.presetName)
+                        if (runComparison?.presetName == preset.presetName) {
+                            runComparison = null
+                        }
+                        coroutineScope.launch {
+                            personalBestRunDao.deleteByPresetName(preset.presetName)
+                        }
+                    },
                     onDeletePreset = { preset ->
                         if (preset.presetName != DefaultPreset.presetName) {
                             val deletedActivePreset = preset.presetName == activePreset.presetName
@@ -483,13 +682,14 @@ private fun ThorSpeedrunSplitsApp() {
                             if (deleteIndex >= 0) {
                                 savedPresets.removeAt(deleteIndex)
                                 savedRuns.remove(preset.presetName)
+                                presetStats.remove(preset.presetName)
                                 coroutineScope.launch {
                                     personalBestRunDao.deleteByPresetName(preset.presetName)
+                                    splitPresetDao.deleteByPresetName(preset.presetName)
                                 }
                             }
                             if (deletedActivePreset) {
-                                activePreset = DefaultPreset
-                                resetRun(DefaultPreset.segments.size)
+                                loadPreset(DefaultPreset)
                             }
                         }
                     },
@@ -547,6 +747,35 @@ private data class ButtonSize(
 )
 
 @Composable
+private fun rememberButtonVibration(): () -> Unit {
+    val context = LocalContext.current.applicationContext
+    return remember(context) {
+        { performButtonVibration(context) }
+    }
+}
+
+private fun performButtonVibration(context: Context) {
+    val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    } ?: return
+
+    if (!vibrator.hasVibrator()) {
+        return
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+    } else {
+        vibrator.vibrate(
+            VibrationEffect.createOneShot(ButtonVibrationMillis, ButtonVibrationAmplitude)
+        )
+    }
+}
+
+@Composable
 private fun RunTitle(
     game: String,
     category: String,
@@ -576,12 +805,42 @@ private fun RunTitle(
 }
 
 @Composable
+private fun PresetStatsPanel(
+    attemptedRuns: Int,
+    totalTimeText: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+    ) {
+        Text(
+            text = "Attempts $attemptedRuns",
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Total $totalTimeText",
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 private fun SplitList(
     splits: List<SplitSegment>,
     completedTimes: List<Long?>,
     displayedComparisonRun: Run?,
     runComparison: Run?,
     activeSplitIndex: Int,
+    resetScrollRequest: Int,
     isFinished: Boolean,
     rowHeight: Dp,
     rowTextSize: TextUnit,
@@ -590,9 +849,16 @@ private fun SplitList(
     val listState = rememberLazyListState()
     val oneAwayVisibleIndex = when {
         splits.isEmpty() -> 0
+        activeSplitIndex == 0 && !isFinished -> 0
         isFinished -> activeSplitIndex.coerceIn(splits.indices)
         activeSplitIndex < splits.lastIndex -> activeSplitIndex + 1
         else -> activeSplitIndex
+    }
+
+    LaunchedEffect(resetScrollRequest) {
+        if (resetScrollRequest > 0) {
+            listState.animateScrollToItem(0)
+        }
     }
 
     LaunchedEffect(oneAwayVisibleIndex) {
@@ -719,10 +985,13 @@ private fun BottomControls(
     buttonEnabled: Boolean,
     buttonText: String,
     buttonSize: ButtonSize,
+    resetButtonSize: ButtonSize,
+    showResetButton: Boolean,
     timerText: String,
     timerColor: Color,
     timerSize: TextUnit,
     onSplit: () -> Unit,
+    onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -735,6 +1004,33 @@ private fun BottomControls(
             onSplit = onSplit,
             modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
         )
+        AnimatedVisibility(
+            visible = showResetButton,
+            enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
+                scaleIn(
+                    animationSpec = tween(ButtonFadeMillis),
+                    initialScale = 0.92f
+                ),
+            exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
+                scaleOut(
+                    animationSpec = tween(ButtonFadeMillis),
+                    targetScale = 0.92f
+                )
+        ) {
+            Row {
+                Spacer(modifier = Modifier.width(12.dp))
+                SplitButton(
+                    enabled = true,
+                    text = "RESET",
+                    onSplit = onReset,
+                    fontSize = 24.sp,
+                    modifier = Modifier.size(
+                        width = resetButtonSize.width,
+                        height = resetButtonSize.height
+                    )
+                )
+            }
+        }
         Spacer(modifier = Modifier.weight(1f))
         Text(
             text = timerText,
@@ -752,6 +1048,7 @@ private fun SettingsButton(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
         targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
@@ -772,7 +1069,10 @@ private fun SettingsButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
             )
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
@@ -846,6 +1146,7 @@ private fun SettingsPanel(
     onRemoveDraftSegment: () -> Unit,
     onSaveDraftPreset: () -> Unit,
     onLoadPreset: (SplitPreset) -> Unit,
+    onClearPersonalBest: (SplitPreset) -> Unit,
     onDeletePreset: (SplitPreset) -> Unit,
     onResetDefault: () -> Unit,
     modifier: Modifier = Modifier
@@ -858,7 +1159,7 @@ private fun SettingsPanel(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 24.dp, top = 22.dp, end = 94.dp, bottom = 22.dp)
+                .padding(horizontal = 24.dp, vertical = 22.dp)
         ) {
             item {
                 Text(
@@ -879,6 +1180,7 @@ private fun SettingsPanel(
                         isActive = preset.presetName == activePreset.presetName,
                         canDelete = preset.presetName != DefaultPreset.presetName,
                         onLoad = { onLoadPreset(preset) },
+                        onClearPersonalBest = { onClearPersonalBest(preset) },
                         onDelete = { onDeletePreset(preset) }
                     )
                 }
@@ -975,6 +1277,7 @@ private fun PresetLoadRow(
     isActive: Boolean,
     canDelete: Boolean,
     onLoad: () -> Unit,
+    onClearPersonalBest: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -1006,6 +1309,12 @@ private fun PresetLoadRow(
             text = "LOAD",
             onClick = onLoad,
             modifier = Modifier.size(width = 86.dp, height = 34.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        PanelTextButton(
+            text = "CLEAR PB",
+            onClick = onClearPersonalBest,
+            modifier = Modifier.size(width = 118.dp, height = 34.dp)
         )
         if (canDelete) {
             Spacer(modifier = Modifier.width(8.dp))
@@ -1109,6 +1418,7 @@ private fun ColorSwatchButton(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val borderColor by animateColorAsState(
         targetValue = if (isPressed) PrimaryText else DividerColor,
@@ -1123,7 +1433,10 @@ private fun ColorSwatchButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
             )
     )
 }
@@ -1135,6 +1448,7 @@ private fun PanelTextButton(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
         targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
@@ -1155,7 +1469,10 @@ private fun PanelTextButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
             )
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
@@ -1173,6 +1490,7 @@ private fun CloseButton(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
         targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
@@ -1193,7 +1511,10 @@ private fun CloseButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onClick
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
             )
     ) {
         FadingButtonText(
@@ -1209,9 +1530,11 @@ private fun SplitButton(
     enabled: Boolean,
     text: String,
     onSplit: () -> Unit,
+    fontSize: TextUnit = 28.sp,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val isDoneState = text == "DONE"
     val backgroundColor by animateColorAsState(
@@ -1247,21 +1570,23 @@ private fun SplitButton(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .widthIn(min = 180.dp)
             .background(backgroundColor)
             .border(width = 2.dp, color = borderColor)
             .clickable(
                 enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
-                onClick = onSplit
+                onClick = {
+                    vibrate()
+                    onSplit()
+                }
             )
             .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
         FadingButtonText(
             text = text,
             color = textColor,
-            fontSize = 28.sp
+            fontSize = fontSize
         )
     }
 }
@@ -1290,12 +1615,35 @@ private fun FadingButtonText(
 }
 
 private fun formatSeconds(milliseconds: Long): String {
-    return String.format(Locale.US, "%.1fs", milliseconds / 1000.0)
+    return formatTimeValue(milliseconds)
 }
 
 private fun formatDeltaSeconds(milliseconds: Long): String {
     val sign = if (milliseconds >= 0L) "+" else "-"
-    return String.format(Locale.US, "%s%.1fs", sign, kotlin.math.abs(milliseconds) / 1000.0)
+    return "$sign${formatTimeValue(kotlin.math.abs(milliseconds))}"
+}
+
+private fun formatDuration(milliseconds: Long): String {
+    return formatTimeValue(milliseconds)
+}
+
+private fun formatTimeValue(milliseconds: Long): String {
+    val totalSeconds = milliseconds.coerceAtLeast(0L) / 1000.0
+    val hours = (totalSeconds / 3600).toInt()
+    val minutes = ((totalSeconds % 3600) / 60).toInt()
+    val seconds = totalSeconds % 60
+
+    return when {
+        hours > 0 -> {
+            String.format(Locale.US, "%d:%02d:%04.1f", hours, minutes, seconds)
+        }
+        minutes > 0 -> {
+            String.format(Locale.US, "%d:%04.1f", minutes, seconds)
+        }
+        else -> {
+            String.format(Locale.US, "%.1f", seconds)
+        }
+    }
 }
 
 @Preview(showBackground = true, widthDp = 620, heightDp = 540)

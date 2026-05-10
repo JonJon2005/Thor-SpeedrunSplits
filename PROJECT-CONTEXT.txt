@@ -4,7 +4,7 @@ Thor Speedrun Splits - Project Context
 Purpose
 -------
 - Build an open-source Android app for Thor speedrun split tracking.
-- Current app state: Compose prototype with LiveSplit-like rows, manual split button, one-decimal timer, in-memory split preset creation/loading, and Room-backed completed-run/PB comparison.
+- Current app state: Compose prototype with LiveSplit-like rows, manual split button, one-decimal timer, Room-backed split preset creation/loading, and Room-backed completed-run/PB comparison.
 
 Workflow Rule
 -------------
@@ -43,11 +43,13 @@ Design Language
   - OLED-friendly near-black background.
   - Fixed dark system bars and Compose dark theme with dynamic color disabled.
   - App runs in immersive fullscreen: Android status bar and navigation/swipe bar should be hidden because the AYN Thor has physical/back-home controls available for this use case.
-  - Timer and split times use one decimal place with seconds suffix, such as `0.0s`.
+  - Timer and split times use one decimal place without a seconds suffix.
+  - Timing displays should omit the minutes column until it is reached: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
   - Use smaller row/title/timer typography on the wide 31:27 screen than on portrait phone previews.
   - Split rows should use the full app width; title and bottom controls may keep side padding.
   - Buttons should use noticeable but restrained fade animations for visibility, text changes, scale changes, pressed highlights, and color/border state changes; keep animations consistent across controls.
+  - Buttons should trigger subtle hardware vibration feedback on press to suit the AYN Thor's built-in controller/touch hardware.
 
 Core Features
 -------------
@@ -61,29 +63,43 @@ Core Features
   - Pressing `SPLIT` before a run starts begins the timer.
   - Pressing `SPLIT` while running records the current row's elapsed time and advances to the next row.
   - Pressing `SPLIT` on the final row records the final time and stops the timer.
+  - While a run is active, a `RESET` button should appear directly to the right of the `SPLIT` button.
+  - The `SPLIT` button should be shortened while supporting the adjacent `RESET` button so the controls do not overlap the timer.
+  - Pressing `RESET` during an active run resets the run and scrolls the split rows back to the top.
   - After the run finishes, the button label changes to `DONE`; pressing it resets the timer, split index, and completed row times for testing.
   - Completed row times replace the sample target time and are shown in green.
   - Final timer turns green when the run is finished.
   - Current layout reserves a bottom control band for the button and timer instead of absolutely overlaying them on top of rows.
+  - All custom app buttons currently use subtle Android vibration feedback when pressed.
 - Settings panel:
   - A top-right simple gear icon button toggles a settings panel.
   - The panel uses the same dark/no-gradient visual style.
   - When open, the settings panel should dim the app behind it and take up almost the full screen.
   - When open, the floating `SET` button should not overlap the panel; the panel should have an `X` close button in its top-right corner.
+  - Settings panel scrollable content should use the full panel width.
+  - Each preset row in settings should include a `CLEAR PB` action that deletes that preset's saved personal best without deleting the preset.
+  - Current implementation uses full-width settings scroll content and exposes `CLEAR PB` beside each preset's load/delete actions.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
   - Preset fields should include game title, speedrun category, number/order of rows, row names, and row colors.
   - Example categories include `Any%`, `100%`, and other speedrun category names.
   - Users should be able to load a preset to run against that split layout.
-  - Current implementation supports in-memory preset creation, saved preset selection/loading, row add/remove, row name editing, row color cycling, and reset to the default example preset.
+  - Current implementation supports Room-backed preset creation, saved preset selection/loading, row add/remove, row name editing, row color cycling, and reset to the default example preset.
   - Loading a preset updates the main timer title/category/rows and resets the active test run.
   - Saved non-default presets can be deleted from the settings panel.
   - The default example preset cannot be deleted; deleting the active custom preset returns the app to the default preset and resets the current test run.
   - Draft preset rows use stable internal IDs for Compose list keys; do not key editable rows by row name because it causes text fields to lose focus and close the keyboard while typing.
   - Presets must not store previous run times, personal bests, completed split times, attempt history, or comparison data.
   - Personal bests and run history should be stored separately from preset files if/when implemented.
-  - Preset persistence is not implemented yet; current presets are session-local.
+  - Custom presets persist through Room so they survive closing/reopening the app.
+  - Presets use a structured Room model: one `split_presets` row per preset and one `split_preset_segments` row per split row.
+  - Presets store two per-preset stats: attempted runs and total time.
+  - Attempted runs increment when a run starts, even if the run is not completed.
+  - Total time tracks active time spent running that preset and updates dynamically while the run is active.
+  - Attempted runs and total time are shown in the top-left of the app.
+  - The default example preset is provided by code and is not stored as a custom preset row.
+  - The loaded preset selection should persist through app close/reopen until the user manually loads a different preset in settings.
 - Run/PB direction from user:
   - Add a separate `Run` data type for completed attempts.
   - Runs were temporarily/in-memory first; PBs now persist through Room so saved PBs survive closing/reopening the app.
@@ -112,6 +128,7 @@ Technical Notes
 - License: MIT.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
+- Haptics: use Android `Vibrator`/`VibratorManager` with a subtle tick effect for button presses; app declares the normal `android.permission.VIBRATE` permission.
 - Storage research direction:
   - Use Room as the primary local persistence layer for app-owned custom split presets, selected/known presets, run attempts, PBs, and history because this is structured data.
   - Use DataStore only for small app preferences such as selected run profile, theme/display options, or last-opened game/category.
@@ -124,6 +141,11 @@ Technical Notes
   - Added `ThorSpeedrunDatabase` with a `personal_best_runs` table.
   - Each PB row stores preset name, split times in milliseconds, final time in milliseconds, and updated timestamp.
   - The app loads all stored PBs into UI state on startup, upserts a PB only when a completed run beats the existing PB, and deletes a PB when its custom preset is deleted or redefined with different structure.
+  - Added `split_presets` and `split_preset_segments` tables for custom preset persistence.
+  - The app loads custom presets from Room on startup, upserts custom presets when saved, and deletes preset rows/segments when a custom preset is deleted.
+  - Added `attemptedRuns` and `totalTimeMillis` columns to `split_presets` with a Room migration from version 2 to 3.
+  - The default example preset now has a Room row for stats while still being hidden from the custom preset list.
+  - Added an `app_preferences` table with a `loaded_preset_name` value so the last manually loaded preset is restored on app restart.
 - LiveSplit references:
   - https://github.com/LiveSplit/LiveSplit
   - https://livesplit.org/components/
@@ -173,3 +195,11 @@ Change Log
 - 2026-05-10: Added deletion for saved custom presets in the settings panel while keeping the default example preset protected.
 - 2026-05-10: Added a separate in-memory `Run` type and per-preset personal-best comparison: presets show `--` before a completed run exists, completed runs save only on finish, and later attempts show split deltas next to PB split times.
 - 2026-05-10: Persisted personal-best runs with Room/KSP so completed best runs survive closing and reopening the app.
+- 2026-05-10: Persisted custom split presets with structured Room tables for presets and ordered preset segments so created presets survive closing and reopening the app.
+- 2026-05-10: Added Room-backed per-preset attempted run and total time stats, plus a top-left live stats display that updates as runs start and accrue time.
+- 2026-05-10: Changed timing displays to remove seconds suffixes and omit the minutes column until at least one minute has elapsed.
+- 2026-05-10: Made settings panel scroll content use the full panel width and added a per-preset `CLEAR PB` button that deletes the saved PB for that preset.
+- 2026-05-10: Persisted the last loaded preset name in Room preferences and restore that preset on app startup until the user manually loads another preset.
+- 2026-05-10: Added a run-only `RESET` button directly to the right of `SPLIT`, shortened the split button to make room, and persist any unflushed active run time before reset.
+- 2026-05-10: Updated run reset behavior so split rows scroll back to the top whenever the run resets.
+- 2026-05-10: Added subtle hardware vibration feedback for custom button presses and declared the Android vibrate permission.
