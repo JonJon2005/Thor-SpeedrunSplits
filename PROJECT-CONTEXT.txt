@@ -216,6 +216,7 @@ Change Log
 - 2026-05-10: Added a run-only `RESET` button directly to the right of `SPLIT`, shortened the split button to make room, and persist any unflushed active run time before reset.
 - 2026-05-10: Updated run reset behavior so split rows scroll back to the top whenever the run resets.
 - 2026-05-10: Added subtle hardware vibration feedback for custom button presses and declared the Android vibrate permission.
+- [APK] v0.1 released
 - 2026-05-10: Made the bottom `SPLIT` and `RESET` controls square and slightly shorter.
 - 2026-05-10: Reduced square run-control label size/padding so button words fit fully inside the controls.
 - 2026-05-10: Redesigned settings as a fullscreen panel with compact preset rows and separate create/edit sections; added selected custom preset editing with row add/delete/reorder controls.
@@ -224,3 +225,4 @@ Change Log
 - 2026-05-10: Preserved PBs across compatible preset edits where first/last splits remain anchored, using `--` for newly inserted or unmapped split rows.
 - 2026-05-10: Made untimed PB rows show current-run split times after splitting and save a full completed run when those missing PB rows are filled.
 - 2026-05-10: Added persisted best segments, gold split coloring, and main timer coloring based on the most recent PB split delta.
+- [APK] v0.2 released
