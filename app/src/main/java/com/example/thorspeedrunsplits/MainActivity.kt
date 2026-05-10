@@ -100,6 +100,11 @@ private data class Run(
     val finalTime: Long
 )
 
+private data class BestSegments(
+    val presetName: String,
+    val segmentTimes: List<Long?>
+)
+
 private data class PresetStats(
     val attemptedRuns: Int = 0,
     val totalTimeMillis: Long = 0L
@@ -122,6 +127,21 @@ private fun PersonalBestRunEntity.toRun(): Run {
         presetName = presetName,
         splitTimes = splitTimesMillis.map { it.takeIf { splitTime -> splitTime >= 0L } },
         finalTime = finalTimeMillis
+    )
+}
+
+private fun BestSegments.toBestSegmentsEntity(): BestSegmentsEntity {
+    return BestSegmentsEntity(
+        presetName = presetName,
+        segmentTimesMillis = segmentTimes.map { it ?: UntimedSplitSentinel },
+        updatedAtMillis = System.currentTimeMillis()
+    )
+}
+
+private fun BestSegmentsEntity.toBestSegments(): BestSegments {
+    return BestSegments(
+        presetName = presetName,
+        segmentTimes = segmentTimesMillis.map { it.takeIf { segmentTime -> segmentTime >= 0L } }
     )
 }
 
@@ -173,6 +193,42 @@ private fun migrateRunForEditedPreset(
     }
 
     return run.copy(splitTimes = migratedSplitTimes)
+}
+
+private fun migrateBestSegmentsForEditedPreset(
+    oldPreset: SplitPreset,
+    editedPreset: SplitPreset,
+    bestSegments: BestSegments
+): BestSegments? {
+    if (
+        oldPreset.segments.isEmpty() ||
+        editedPreset.segments.isEmpty() ||
+        bestSegments.segmentTimes.size != oldPreset.segments.size
+    ) {
+        return null
+    }
+
+    val oldSegmentKeys = oldPreset.segments.indices.associateBy { index ->
+        segmentKey(oldPreset, index)
+    }
+    val migratedSegmentTimes = editedPreset.segments.indices.map { index ->
+        oldSegmentKeys[segmentKey(editedPreset, index)]?.let { oldIndex ->
+            bestSegments.segmentTimes.getOrNull(oldIndex)
+        }
+    }
+    if (migratedSegmentTimes.all { it == null }) {
+        return null
+    }
+    return bestSegments.copy(segmentTimes = migratedSegmentTimes)
+}
+
+private fun segmentKey(preset: SplitPreset, index: Int): String {
+    val previousName = if (index == 0) {
+        "START"
+    } else {
+        preset.segments[index - 1].name
+    }
+    return "$previousName->${preset.segments[index].name}"
 }
 
 private fun SplitPreset.toSplitPresetEntity(stats: PresetStats = PresetStats()): SplitPresetEntity {
@@ -268,6 +324,7 @@ private val PrimaryText = Color(0xFFF6F6F6)
 private val SecondaryText = Color(0xFFC8C8C8)
 private val SuccessGreen = Color(0xFF65E38F)
 private val BehindRed = Color(0xFFFF7070)
+private val GoldSplit = Color(0xFFFFD84D)
 private const val ButtonFadeMillis = 280
 private const val ButtonVibrationMillis = 18L
 private const val ButtonVibrationAmplitude = 36
@@ -316,6 +373,7 @@ private fun ThorSpeedrunSplitsApp() {
         ThorSpeedrunDatabase.getInstance(appContext)
     }
     val personalBestRunDao = remember(database) { database.personalBestRunDao() }
+    val bestSegmentsDao = remember(database) { database.bestSegmentsDao() }
     val splitPresetDao = remember(database) { database.splitPresetDao() }
     val appPreferenceDao = remember(database) { database.appPreferenceDao() }
     val coroutineScope = rememberCoroutineScope()
@@ -330,6 +388,7 @@ private fun ThorSpeedrunSplitsApp() {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
     }
     val savedRuns = remember { mutableStateMapOf<String, Run>() }
+    val savedBestSegments = remember { mutableStateMapOf<String, BestSegments>() }
     val presetStats = remember { mutableStateMapOf<String, PresetStats>() }
     var draftPresetName by remember { mutableStateOf("New Preset") }
     var draftGameTitle by remember { mutableStateOf(DefaultPreset.gameTitle) }
@@ -363,6 +422,7 @@ private fun ThorSpeedrunSplitsApp() {
             repeat(DefaultPreset.segments.size) { add(null) }
         }
     }
+    val goldSplitIndices = remember { mutableStateListOf<Int>() }
 
     fun resetRun(segmentCount: Int) {
         isRunning = false
@@ -375,6 +435,7 @@ private fun ThorSpeedrunSplitsApp() {
         runComparison = null
         completedTimes.clear()
         repeat(segmentCount) { completedTimes.add(null) }
+        goldSplitIndices.clear()
         resetScrollRequest += 1
     }
 
@@ -409,7 +470,7 @@ private fun ThorSpeedrunSplitsApp() {
         nextEditSegmentId = preset.segments.size
     }
 
-    LaunchedEffect(personalBestRunDao, splitPresetDao, appPreferenceDao) {
+    LaunchedEffect(personalBestRunDao, bestSegmentsDao, splitPresetDao, appPreferenceDao) {
         splitPresetDao.ensurePresetExists(
             preset = DefaultPreset.toSplitPresetEntity(),
             segments = DefaultPreset.toSplitPresetSegmentEntities()
@@ -418,6 +479,11 @@ private fun ThorSpeedrunSplitsApp() {
         savedRuns.clear()
         personalBestRunDao.getAll().forEach { savedRun ->
             savedRuns[savedRun.presetName] = savedRun.toRun()
+        }
+
+        savedBestSegments.clear()
+        bestSegmentsDao.getAll().forEach { savedBestSegment ->
+            savedBestSegments[savedBestSegment.presetName] = savedBestSegment.toBestSegments()
         }
 
         val storedPresetRows = splitPresetDao.getAllWithSegments()
@@ -469,6 +535,24 @@ private fun ThorSpeedrunSplitsApp() {
     val savedRunForActivePreset = savedRuns[activePreset.presetName]
         ?.takeIf { it.splitTimes.size == activePreset.segments.size }
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
+    val activeBestSegments = savedBestSegments[activePreset.presetName]
+        ?.takeIf { it.segmentTimes.size == activePreset.segments.size }
+    val latestSplitDeltaMillis = if (isRunning || isFinished) {
+        completedTimes.indices.reversed().firstNotNullOfOrNull { index ->
+            val completedTime = completedTimes.getOrNull(index)
+            val comparisonTime = runComparison?.splitTimes?.getOrNull(index)
+            if (completedTime != null && comparisonTime != null) {
+                completedTime - comparisonTime
+            } else {
+                null
+            }
+        }
+    } else {
+        null
+    }
+    val timerTextColor = latestSplitDeltaMillis?.let {
+        if (it <= 0L) SuccessGreen else BehindRed
+    } ?: PrimaryText
     val activePresetStats = presetStats[activePreset.presetName] ?: PresetStats()
     val liveUnpersistedRunMillis = if (isRunning) {
         (elapsedMillis - persistedCurrentRunMillis).coerceAtLeast(0L)
@@ -518,6 +602,7 @@ private fun ThorSpeedrunSplitsApp() {
                     completedTimes = completedTimes,
                     displayedComparisonRun = displayedComparisonRun,
                     runComparison = runComparison,
+                    goldSplitIndices = goldSplitIndices,
                     activeSplitIndex = activeSplitIndex,
                     resetScrollRequest = resetScrollRequest,
                     isFinished = isFinished,
@@ -532,7 +617,7 @@ private fun ThorSpeedrunSplitsApp() {
                     resetButtonSize = resetButtonSize,
                     showResetButton = isRunning,
                     timerText = formatSeconds(elapsedMillis),
-                    timerColor = if (isFinished) SuccessGreen else PrimaryText,
+                    timerColor = timerTextColor,
                     timerSize = timerSize,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -567,6 +652,32 @@ private fun ThorSpeedrunSplitsApp() {
                         }
 
                         val splitElapsed = pressTime - startedAtMillis
+                        val previousSplitElapsed = if (activeSplitIndex == 0) {
+                            0L
+                        } else {
+                            completedTimes.getOrNull(activeSplitIndex - 1) ?: 0L
+                        }
+                        val segmentElapsed = splitElapsed - previousSplitElapsed
+                        val currentSegmentBest = activeBestSegments
+                            ?.segmentTimes
+                            ?.getOrNull(activeSplitIndex)
+                        if (currentSegmentBest == null || segmentElapsed < currentSegmentBest) {
+                            val updatedSegmentTimes = MutableList(activePreset.segments.size) { index ->
+                                activeBestSegments?.segmentTimes?.getOrNull(index)
+                            }
+                            updatedSegmentTimes[activeSplitIndex] = segmentElapsed
+                            val updatedBestSegments = BestSegments(
+                                presetName = activePreset.presetName,
+                                segmentTimes = updatedSegmentTimes
+                            )
+                            savedBestSegments[activePreset.presetName] = updatedBestSegments
+                            if (activeSplitIndex !in goldSplitIndices) {
+                                goldSplitIndices.add(activeSplitIndex)
+                            }
+                            coroutineScope.launch {
+                                bestSegmentsDao.upsert(updatedBestSegments.toBestSegmentsEntity())
+                            }
+                        }
                         completedTimes[activeSplitIndex] = splitElapsed
 
                         if (activeSplitIndex == activePreset.segments.lastIndex) {
@@ -736,8 +847,10 @@ private fun ThorSpeedrunSplitsApp() {
                         if (existingIndex >= 0) {
                             if (savedPresets[existingIndex] != preset) {
                                 savedRuns.remove(preset.presetName)
+                                savedBestSegments.remove(preset.presetName)
                                 coroutineScope.launch {
                                     personalBestRunDao.deleteByPresetName(preset.presetName)
+                                    bestSegmentsDao.deleteByPresetName(preset.presetName)
                                 }
                             }
                             savedPresets[existingIndex] = preset
@@ -823,6 +936,27 @@ private fun ThorSpeedrunSplitsApp() {
                                 )
                                 val oldPreset = savedPresets[existingIndex]
                                 if (oldPreset != editedPreset) {
+                                    val migratedBestSegments = savedBestSegments[targetPresetName]?.let {
+                                        migrateBestSegmentsForEditedPreset(
+                                            oldPreset = oldPreset,
+                                            editedPreset = editedPreset,
+                                            bestSegments = it
+                                        )
+                                    }
+                                    if (migratedBestSegments != null) {
+                                        savedBestSegments[targetPresetName] = migratedBestSegments
+                                        coroutineScope.launch {
+                                            bestSegmentsDao.upsert(
+                                                migratedBestSegments.toBestSegmentsEntity()
+                                            )
+                                        }
+                                    } else {
+                                        savedBestSegments.remove(targetPresetName)
+                                        coroutineScope.launch {
+                                            bestSegmentsDao.deleteByPresetName(targetPresetName)
+                                        }
+                                    }
+
                                     val migratedRun = savedRuns[targetPresetName]?.let { run ->
                                         migrateRunForEditedPreset(
                                             oldPreset = oldPreset,
@@ -885,9 +1019,11 @@ private fun ThorSpeedrunSplitsApp() {
                             if (deleteIndex >= 0) {
                                 savedPresets.removeAt(deleteIndex)
                                 savedRuns.remove(preset.presetName)
+                                savedBestSegments.remove(preset.presetName)
                                 presetStats.remove(preset.presetName)
                                 coroutineScope.launch {
                                     personalBestRunDao.deleteByPresetName(preset.presetName)
+                                    bestSegmentsDao.deleteByPresetName(preset.presetName)
                                     splitPresetDao.deleteByPresetName(preset.presetName)
                                 }
                                 if (editTargetPresetName == preset.presetName) {
@@ -1050,6 +1186,7 @@ private fun SplitList(
     completedTimes: List<Long?>,
     displayedComparisonRun: Run?,
     runComparison: Run?,
+    goldSplitIndices: List<Int>,
     activeSplitIndex: Int,
     resetScrollRequest: Int,
     isFinished: Boolean,
@@ -1109,6 +1246,7 @@ private fun SplitList(
             val personalBestTime = displayedComparisonRun?.splitTimes?.getOrNull(index)
             val currentRunTime = completedTimes[index]
             val displayedTime = personalBestTime ?: currentRunTime
+            val isGoldSplit = index in goldSplitIndices
             val deltaMillis = completedTimes[index]?.let { completedTime ->
                 runComparison?.splitTimes?.getOrNull(index)?.let { comparisonTime ->
                     completedTime - comparisonTime
@@ -1118,9 +1256,18 @@ private fun SplitList(
                 split = split,
                 comparisonTime = displayedTime?.let(::formatSeconds) ?: "--",
                 hasComparisonTime = displayedTime != null,
+                comparisonTimeColor = if (isGoldSplit && deltaMillis == null) {
+                    GoldSplit
+                } else {
+                    null
+                },
                 deltaText = deltaMillis?.let(::formatDeltaSeconds),
                 deltaColor = deltaMillis?.let {
-                    if (it <= 0L) SuccessGreen else BehindRed
+                    when {
+                        isGoldSplit -> GoldSplit
+                        it <= 0L -> SuccessGreen
+                        else -> BehindRed
+                    }
                 } ?: SecondaryText,
                 isActive = index == activeSplitIndex && !isFinished,
                 rowHeight = rowHeight,
@@ -1135,6 +1282,7 @@ private fun SplitRow(
     split: SplitSegment,
     comparisonTime: String,
     hasComparisonTime: Boolean,
+    comparisonTimeColor: Color?,
     deltaText: String?,
     deltaColor: Color,
     isActive: Boolean,
@@ -1143,7 +1291,7 @@ private fun SplitRow(
     modifier: Modifier = Modifier
 ) {
     val rowBackground = if (isActive) Color(0xFF111111) else RowBlack
-    val timeColor = if (hasComparisonTime) PrimaryText else SecondaryText
+    val timeColor = comparisonTimeColor ?: if (hasComparisonTime) PrimaryText else SecondaryText
 
     Row(
         verticalAlignment = Alignment.CenterVertically,

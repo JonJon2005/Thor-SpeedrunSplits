@@ -26,6 +26,13 @@ data class PersonalBestRunEntity(
     val updatedAtMillis: Long
 )
 
+@Entity(tableName = "best_segments")
+data class BestSegmentsEntity(
+    @PrimaryKey val presetName: String,
+    val segmentTimesMillis: List<Long>,
+    val updatedAtMillis: Long
+)
+
 @Entity(tableName = "split_presets")
 data class SplitPresetEntity(
     @PrimaryKey val presetName: String,
@@ -76,6 +83,18 @@ interface PersonalBestRunDao {
     suspend fun upsert(run: PersonalBestRunEntity)
 
     @Query("DELETE FROM personal_best_runs WHERE presetName = :presetName")
+    suspend fun deleteByPresetName(presetName: String)
+}
+
+@Dao
+interface BestSegmentsDao {
+    @Query("SELECT * FROM best_segments")
+    suspend fun getAll(): List<BestSegmentsEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(bestSegments: BestSegmentsEntity)
+
+    @Query("DELETE FROM best_segments WHERE presetName = :presetName")
     suspend fun deleteByPresetName(presetName: String)
 }
 
@@ -177,16 +196,18 @@ class LongListConverters {
 @Database(
     entities = [
         PersonalBestRunEntity::class,
+        BestSegmentsEntity::class,
         SplitPresetEntity::class,
         SplitPresetSegmentEntity::class,
         AppPreferenceEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(LongListConverters::class)
 abstract class ThorSpeedrunDatabase : RoomDatabase() {
     abstract fun personalBestRunDao(): PersonalBestRunDao
+    abstract fun bestSegmentsDao(): BestSegmentsDao
     abstract fun splitPresetDao(): SplitPresetDao
     abstract fun appPreferenceDao(): AppPreferenceDao
 
@@ -254,6 +275,21 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `best_segments` (
+                        `presetName` TEXT NOT NULL,
+                        `segmentTimesMillis` TEXT NOT NULL,
+                        `updatedAtMillis` INTEGER NOT NULL,
+                        PRIMARY KEY(`presetName`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): ThorSpeedrunDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -261,7 +297,12 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
                     ThorSpeedrunDatabase::class.java,
                     "thor_speedrun_splits.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5
+                    )
                     .build()
                     .also { instance = it }
             }

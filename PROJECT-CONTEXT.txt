@@ -116,6 +116,9 @@ Core Features
   - If a split row has no saved PB time, completing that split during the current run temporarily shows the current run's split time in that row; resetting an unfinished run returns it to `--`.
   - If a completed run fills previously untimed PB rows, that run is saved as the new PB for the edited/current preset.
   - During a new run against a preset with a saved PB, completed rows show a `+/-` delta next to the PB split time.
+  - The main timer color follows the most recent completed split's PB comparison: green when ahead/tied, red when behind, and unchanged when there is no PB comparison.
+  - Presets persist best segment times separately from PBs.
+  - A completed split is marked gold when its segment duration is the best ever saved for that preset/segment; gold split coloring does not override the main timer's green/red PB comparison color.
   - Updating a preset definition with the same name clears any saved run for that preset if the preset changes in a way that cannot be mapped to the old PB.
   - If an edited preset keeps the same first and last split names in the first/last positions, preserve the old PB by mapping matching split names and showing `--` for inserted or otherwise untimed new splits.
   - PB persistence currently uses preset name as the Room key; preset definitions themselves are still session-local until preset persistence is implemented.
@@ -150,6 +153,7 @@ Technical Notes
   - Added `ThorSpeedrunDatabase` with a `personal_best_runs` table.
   - Each PB row stores preset name, split times in milliseconds, final time in milliseconds, and updated timestamp.
   - The app loads all stored PBs into UI state on startup, upserts a PB only when a completed run beats the existing PB, and deletes a PB when its custom preset is deleted or redefined with different structure.
+  - Added `best_segments` table for per-preset best segment durations, with nullable/untimed entries stored using the same sentinel approach as migrated PB split rows.
   - Added `split_presets` and `split_preset_segments` tables for custom preset persistence.
   - The app loads custom presets from Room on startup, upserts custom presets when saved, and deletes preset rows/segments when a custom preset is deleted.
   - Added `attemptedRuns` and `totalTimeMillis` columns to `split_presets` with a Room migration from version 2 to 3.
@@ -219,3 +223,4 @@ Change Log
 - 2026-05-10: Changed row edit controls to arrow/X symbols and reordered row color cycling into a rainbow sequence with white.
 - 2026-05-10: Preserved PBs across compatible preset edits where first/last splits remain anchored, using `--` for newly inserted or unmapped split rows.
 - 2026-05-10: Made untimed PB rows show current-run split times after splitting and save a full completed run when those missing PB rows are filled.
+- 2026-05-10: Added persisted best segments, gold split coloring, and main timer coloring based on the most recent PB split delta.
