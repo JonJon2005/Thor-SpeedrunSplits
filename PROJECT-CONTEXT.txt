@@ -276,3 +276,4 @@ Change Log
 - 2026-05-11: Replaced the updater's `OPEN` button with an inline blue underlined `Update Now` hyperlink beside the version text.
 - 2026-05-11: Changed the updater current-version status wording from `Up to date` to `Latest version installed`.
 - 2026-05-11: Made updater row status and `Update Now` link text always render with the default system font, independent of the selected app font.
+- [APK] v0.4 released
