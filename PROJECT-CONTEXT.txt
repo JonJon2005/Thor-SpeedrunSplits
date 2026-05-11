@@ -157,7 +157,8 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.4"` and `versionCode = 4`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.4.1"` and `versionCode = 5`.
+- Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
 - Haptics: use Android `Vibrator`/`VibratorManager` with a subtle tick effect for button presses; app declares the normal `android.permission.VIBRATE` permission.
@@ -277,3 +278,6 @@ Change Log
 - 2026-05-11: Changed the updater current-version status wording from `Up to date` to `Latest version installed`.
 - 2026-05-11: Made updater row status and `Update Now` link text always render with the default system font, independent of the selected app font.
 - [APK] v0.4 released
+- 2026-05-11: Replaced the default Android launcher icons with the provided generated icon assets, moved the 512px store icon to `docs/images/play_store_512.png`, and removed the temporary root `android/` icon staging folder.
+- 2026-05-11: Bumped app version metadata to v0.4.1/versionCode 5.
+- [APK] v0.4.1 released
