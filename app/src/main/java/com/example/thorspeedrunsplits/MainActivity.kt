@@ -343,7 +343,9 @@ private data class AppThemeColors(
     val primaryText: Color,
     val secondaryText: Color,
     val successGreen: Color,
-    val behindRed: Color
+    val behindRed: Color,
+    val liveActiveSuccessGreen: Color,
+    val liveActiveBehindRed: Color
 )
 
 private enum class AppThemeMode(
@@ -369,7 +371,9 @@ private val OledThemeColors = AppThemeColors(
     primaryText = Color(0xFFF6F6F6),
     secondaryText = Color(0xFFC8C8C8),
     successGreen = Color(0xFF65E38F),
-    behindRed = Color(0xFFFF7070)
+    behindRed = Color(0xFFFF7070),
+    liveActiveSuccessGreen = Color(0xFF00FF66),
+    liveActiveBehindRed = Color(0xFFFF3333)
 )
 
 private val DarkThemeColors = AppThemeColors(
@@ -380,7 +384,9 @@ private val DarkThemeColors = AppThemeColors(
     primaryText = Color(0xFFF3F3F3),
     secondaryText = Color(0xFFC9C9C9),
     successGreen = Color(0xFF65E38F),
-    behindRed = Color(0xFFFF7070)
+    behindRed = Color(0xFFFF7070),
+    liveActiveSuccessGreen = Color(0xFF00FF66),
+    liveActiveBehindRed = Color(0xFFFF3333)
 )
 
 private val LightThemeColors = AppThemeColors(
@@ -391,7 +397,9 @@ private val LightThemeColors = AppThemeColors(
     primaryText = Color(0xFF151515),
     secondaryText = Color(0xFF575757),
     successGreen = Color(0xFF148A3D),
-    behindRed = Color(0xFFD42121)
+    behindRed = Color(0xFFD42121),
+    liveActiveSuccessGreen = Color(0xFF008F2F),
+    liveActiveBehindRed = Color(0xFFE00000)
 )
 
 private val LocalAppThemeColors = staticCompositionLocalOf { OledThemeColors }
@@ -420,6 +428,10 @@ private val SuccessGreen: Color
     @Composable get() = LocalAppThemeColors.current.successGreen
 private val BehindRed: Color
     @Composable get() = LocalAppThemeColors.current.behindRed
+private val LiveActiveSuccessGreen: Color
+    @Composable get() = LocalAppThemeColors.current.liveActiveSuccessGreen
+private val LiveActiveBehindRed: Color
+    @Composable get() = LocalAppThemeColors.current.liveActiveBehindRed
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -672,7 +684,12 @@ private fun ThorSpeedrunSplitsApp() {
     }
     val latestSplitDeltaMillis = activeSplitDeltaMillis ?: latestCompletedSplitDeltaMillis
     val timerTextColor = latestSplitDeltaMillis?.let {
-        if (it <= 0L) SuccessGreen else BehindRed
+        when {
+            activeSplitDeltaMillis != null && it <= 0L -> LiveActiveSuccessGreen
+            activeSplitDeltaMillis != null -> LiveActiveBehindRed
+            it <= 0L -> SuccessGreen
+            else -> BehindRed
+        }
     } ?: PrimaryText
     val activePresetStats = presetStats[activePreset.presetName] ?: PresetStats()
     val liveUnpersistedRunMillis = if (isRunning) {
@@ -1476,6 +1493,8 @@ private fun SplitList(
                 deltaColor = deltaMillis?.let {
                     when {
                         isGoldSplit -> GoldSplit
+                        isActiveSplit && isRunning && it <= 0L -> LiveActiveSuccessGreen
+                        isActiveSplit && isRunning -> LiveActiveBehindRed
                         it <= 0L -> SuccessGreen
                         else -> BehindRed
                     }

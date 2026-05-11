@@ -54,6 +54,7 @@ Design Language
   - App supports three display themes from settings: Light, Dark, and OLED.
   - OLED mode is the original near-black AMOLED-friendly look; Dark mode uses lifted charcoal surfaces; Light mode uses light neutral surfaces.
   - Ahead/behind timer and delta colors are theme-aware: OLED and Dark keep the original bright green/red values, while Light uses darker green/red values for contrast. Gold split coloring remains gold.
+  - Live active split delta colors use a more saturated red/green pair than completed comparison deltas so in-progress time loss/gain is easier to spot.
 
 Core Features
 -------------
@@ -251,3 +252,4 @@ Change Log
 - 2026-05-10: Replaced README screenshot instructions with the four provided app screenshots from `docs/images/`.
 - [APK] v0.3 released
 - 2026-05-11: Changed active-row PB delta behavior so the live green negative countdown no longer appears at the start of runs/splits; green active delta appears only after the current segment starts losing time relative to the previous split's PB delta, while red behind-PB count-up always appears whenever behind.
+- 2026-05-11: Made live active split green/red timer colors more saturated while leaving completed comparison delta colors unchanged.
