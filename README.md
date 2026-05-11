@@ -14,7 +14,7 @@ The app is optimized for the Thor's 1080x1240 3.92 inch AMOLED bottom display, w
 - Persistent loaded preset selection across app restarts.
 - Per-preset attempted run count and total time tracked in the top-left of the timer screen.
 - Room-backed personal bests saved only when a run is completed.
-- PB comparison deltas while running, including live active-split countdown/count-up behavior.
+- PB comparison deltas while running, including active-split green deltas after segment time loss and red count-up whenever behind PB.
 - Best segment tracking per preset with gold split highlighting.
 - Records tab for viewing PB split times, PB completion date/time, best segments, and clearing PB/gold data.
 - Light, Dark, and OLED themes, plus an option to follow Android system light/dark mode.
