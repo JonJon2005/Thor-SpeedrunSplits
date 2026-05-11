@@ -50,6 +50,9 @@ Design Language
   - Split rows should use the full app width; title and bottom controls may keep side padding.
   - Buttons should use noticeable but restrained fade animations for visibility, text changes, scale changes, pressed highlights, and color/border state changes; keep animations consistent across controls.
   - Buttons should trigger subtle hardware vibration feedback on press to suit the AYN Thor's built-in controller/touch hardware.
+  - App supports three display themes from settings: Light, Dark, and OLED.
+  - OLED mode is the original near-black AMOLED-friendly look; Dark mode uses lifted charcoal surfaces; Light mode uses light neutral surfaces.
+  - Ahead/behind timer and delta colors are theme-aware: OLED and Dark keep the original bright green/red values, while Light uses darker green/red values for contrast. Gold split coloring remains gold.
 
 Core Features
 -------------
@@ -84,7 +87,10 @@ Core Features
   - Create preset and edit-selected-preset workflows should be visually separate and controlled by tabs so only one form is shown at a time.
   - Row editor controls should use arrows for move up/down and `X` for row deletion.
   - Settings includes a Records tab for the currently loaded preset, showing saved PB split times and saved best-segment/gold times.
+  - Records should show the loaded preset PB completion date/time in `mm/dd/yy 00:00am/pm` style when a PB exists.
   - Records controls should allow clearing the loaded preset's PB, clearing all saved gold/best segments, or clearing a specific saved gold/best segment row.
+  - Settings includes a three-way theme toggle for Light, Dark, and OLED mode.
+  - Settings includes a `Use System Setting` theme toggle. When enabled, Android light mode maps to the app Light theme and Android dark mode maps to the app Dark theme. OLED remains manual-only.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
@@ -162,6 +168,8 @@ Technical Notes
   - Added `attemptedRuns` and `totalTimeMillis` columns to `split_presets` with a Room migration from version 2 to 3.
   - The default example preset now has a Room row for stats while still being hidden from the custom preset list.
   - Added an `app_preferences` table with a `loaded_preset_name` value so the last manually loaded preset is restored on app restart.
+  - Theme mode is stored in `app_preferences` under `theme_mode`.
+  - System theme following is stored in `app_preferences` under `use_system_theme`; when disabled, the last manual Light/Dark/OLED selection is reused on app restart.
 - LiveSplit references:
   - https://github.com/LiveSplit/LiveSplit
   - https://livesplit.org/components/
@@ -231,3 +239,6 @@ Change Log
 - [APK] v0.2 released
 - 2026-05-10: Added live active-row PB delta countdown/count-up behavior so current splits show green negative time remaining against PB and red positive time once behind.
 - 2026-05-10: Added a settings Records tab for the loaded preset with PB split display, best-segment/gold display, clear-PB, clear-all-gold, and per-row gold reset controls.
+- 2026-05-10: Added persisted Light/Dark/OLED theme selection in settings and applied theme-aware palettes across the timer screen and settings UI while preserving green/red/gold comparison colors.
+- 2026-05-10: Adjusted Light mode comparison colors to darker green/red values while keeping OLED and Dark mode comparison colors unchanged.
+- 2026-05-10: Added PB completion date/time display to the Records tab and added a persisted system-theme toggle that maps Android Light/Dark to app Light/Dark while keeping OLED as a manual theme.

@@ -40,10 +40,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -53,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -72,7 +75,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.thorspeedrunsplits.ui.theme.ThorSpeedrunSplitsTheme
+import java.util.Date
 import java.util.Locale
+import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -97,7 +102,8 @@ private data class SplitPreset(
 private data class Run(
     val presetName: String,
     val splitTimes: List<Long?>,
-    val finalTime: Long
+    val finalTime: Long,
+    val completedAtMillis: Long
 )
 
 private data class BestSegments(
@@ -111,6 +117,8 @@ private data class PresetStats(
 )
 
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
+private const val ThemePreferenceKey = "theme_mode"
+private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val UntimedSplitSentinel = -1L
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
@@ -118,7 +126,7 @@ private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
         presetName = presetName,
         splitTimesMillis = splitTimes.map { it ?: UntimedSplitSentinel },
         finalTimeMillis = finalTime,
-        updatedAtMillis = System.currentTimeMillis()
+        updatedAtMillis = completedAtMillis
     )
 }
 
@@ -126,7 +134,8 @@ private fun PersonalBestRunEntity.toRun(): Run {
     return Run(
         presetName = presetName,
         splitTimes = splitTimesMillis.map { it.takeIf { splitTime -> splitTime >= 0L } },
-        finalTime = finalTimeMillis
+        finalTime = finalTimeMillis,
+        completedAtMillis = updatedAtMillis
     )
 }
 
@@ -317,17 +326,96 @@ private val DefaultPreset = SplitPreset(
     )
 )
 
-private val OledBlack = Color(0xFF020202)
-private val RowBlack = Color(0xFF080808)
-private val DividerColor = Color(0xFF242424)
-private val PrimaryText = Color(0xFFF6F6F6)
-private val SecondaryText = Color(0xFFC8C8C8)
-private val SuccessGreen = Color(0xFF65E38F)
-private val BehindRed = Color(0xFFFF7070)
 private val GoldSplit = Color(0xFFFFD84D)
 private const val ButtonFadeMillis = 280
 private const val ButtonVibrationMillis = 18L
 private const val ButtonVibrationAmplitude = 36
+
+private data class AppThemeColors(
+    val screenBackground: Color,
+    val rowBackground: Color,
+    val activeRowBackground: Color,
+    val divider: Color,
+    val primaryText: Color,
+    val secondaryText: Color,
+    val successGreen: Color,
+    val behindRed: Color
+)
+
+private enum class AppThemeMode(
+    val storageValue: String,
+    val label: String
+) {
+    Light("light", "LIGHT"),
+    Dark("dark", "DARK"),
+    Oled("oled", "OLED");
+
+    companion object {
+        fun fromStorageValue(value: String?): AppThemeMode {
+            return entries.firstOrNull { it.storageValue == value } ?: Oled
+        }
+    }
+}
+
+private val OledThemeColors = AppThemeColors(
+    screenBackground = Color(0xFF020202),
+    rowBackground = Color(0xFF080808),
+    activeRowBackground = Color(0xFF111111),
+    divider = Color(0xFF242424),
+    primaryText = Color(0xFFF6F6F6),
+    secondaryText = Color(0xFFC8C8C8),
+    successGreen = Color(0xFF65E38F),
+    behindRed = Color(0xFFFF7070)
+)
+
+private val DarkThemeColors = AppThemeColors(
+    screenBackground = Color(0xFF141414),
+    rowBackground = Color(0xFF1C1C1C),
+    activeRowBackground = Color(0xFF252525),
+    divider = Color(0xFF3A3A3A),
+    primaryText = Color(0xFFF3F3F3),
+    secondaryText = Color(0xFFC9C9C9),
+    successGreen = Color(0xFF65E38F),
+    behindRed = Color(0xFFFF7070)
+)
+
+private val LightThemeColors = AppThemeColors(
+    screenBackground = Color(0xFFF4F4F1),
+    rowBackground = Color(0xFFFFFFFF),
+    activeRowBackground = Color(0xFFEAEFEB),
+    divider = Color(0xFFC8C8C2),
+    primaryText = Color(0xFF151515),
+    secondaryText = Color(0xFF575757),
+    successGreen = Color(0xFF148A3D),
+    behindRed = Color(0xFFD42121)
+)
+
+private val LocalAppThemeColors = staticCompositionLocalOf { OledThemeColors }
+
+private fun colorsForTheme(themeMode: AppThemeMode): AppThemeColors {
+    return when (themeMode) {
+        AppThemeMode.Light -> LightThemeColors
+        AppThemeMode.Dark -> DarkThemeColors
+        AppThemeMode.Oled -> OledThemeColors
+    }
+}
+
+private val OledBlack: Color
+    @Composable get() = LocalAppThemeColors.current.screenBackground
+private val RowBlack: Color
+    @Composable get() = LocalAppThemeColors.current.rowBackground
+private val ActiveRowBackground: Color
+    @Composable get() = LocalAppThemeColors.current.activeRowBackground
+private val DividerColor: Color
+    @Composable get() = LocalAppThemeColors.current.divider
+private val PrimaryText: Color
+    @Composable get() = LocalAppThemeColors.current.primaryText
+private val SecondaryText: Color
+    @Composable get() = LocalAppThemeColors.current.secondaryText
+private val SuccessGreen: Color
+    @Composable get() = LocalAppThemeColors.current.successGreen
+private val BehindRed: Color
+    @Composable get() = LocalAppThemeColors.current.behindRed
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -383,6 +471,8 @@ private fun ThorSpeedrunSplitsApp() {
     var resetScrollRequest by remember { mutableStateOf(0) }
     var isSettingsOpen by remember { mutableStateOf(false) }
     var activePreset by remember { mutableStateOf(DefaultPreset) }
+    var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
+    var useSystemTheme by remember { mutableStateOf(false) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
@@ -502,6 +592,10 @@ private fun ThorSpeedrunSplitsApp() {
         val restoredPreset = savedPresets.firstOrNull {
             it.presetName == loadedPresetName
         } ?: DefaultPreset
+        selectedThemeMode = AppThemeMode.fromStorageValue(
+            appPreferenceDao.getValue(ThemePreferenceKey)
+        )
+        useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
         activePreset = restoredPreset
         resetRun(restoredPreset.segments.size)
     }
@@ -527,6 +621,18 @@ private fun ThorSpeedrunSplitsApp() {
         }
     }
 
+    val systemThemeMode = if (isSystemInDarkTheme()) {
+        AppThemeMode.Dark
+    } else {
+        AppThemeMode.Light
+    }
+    val effectiveThemeMode = if (useSystemTheme) {
+        systemThemeMode
+    } else {
+        selectedThemeMode
+    }
+
+    CompositionLocalProvider(LocalAppThemeColors provides colorsForTheme(effectiveThemeMode)) {
     val elapsedMillis = when {
         isRunning -> nowMillis - startedAtMillis
         isFinished -> finishedElapsedMillis
@@ -716,7 +822,8 @@ private fun ThorSpeedrunSplitsApp() {
                                         else -> splitElapsed
                                     }
                                 },
-                                finalTime = splitElapsed
+                                finalTime = splitElapsed,
+                                completedAtMillis = System.currentTimeMillis()
                             )
                             val currentBest = savedRuns[activePreset.presetName]
                             if (
@@ -797,6 +904,38 @@ private fun ThorSpeedrunSplitsApp() {
                     activePreset = activePreset,
                     activePersonalBest = savedRuns[activePreset.presetName],
                     activeBestSegments = savedBestSegments[activePreset.presetName],
+                    selectedThemeMode = selectedThemeMode,
+                    effectiveThemeMode = effectiveThemeMode,
+                    useSystemTheme = useSystemTheme,
+                    onSelectedThemeModeChange = { themeMode ->
+                        selectedThemeMode = themeMode
+                        useSystemTheme = false
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = ThemePreferenceKey,
+                                    value = themeMode.storageValue
+                                )
+                            )
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = UseSystemThemePreferenceKey,
+                                    value = "false"
+                                )
+                            )
+                        }
+                    },
+                    onUseSystemThemeChange = { enabled ->
+                        useSystemTheme = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = UseSystemThemePreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
                     selectedTab = presetSettingsTab,
                     onSelectedTabChange = { presetSettingsTab = it },
                     draftPresetName = draftPresetName,
@@ -1130,6 +1269,7 @@ private fun ThorSpeedrunSplitsApp() {
             }
         }
     }
+    }
 }
 
 private data class ButtonSize(
@@ -1349,7 +1489,7 @@ private fun SplitRow(
     textSize: TextUnit,
     modifier: Modifier = Modifier
 ) {
-    val rowBackground = if (isActive) Color(0xFF111111) else RowBlack
+    val rowBackground = if (isActive) ActiveRowBackground else RowBlack
     val timeColor = comparisonTimeColor ?: if (hasComparisonTime) PrimaryText else SecondaryText
 
     Row(
@@ -1472,7 +1612,7 @@ private fun SettingsButton(
     val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
-        targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
+        targetValue = if (isPressed) ActiveRowBackground else RowBlack,
         animationSpec = tween(ButtonFadeMillis),
         label = "settingsButtonBackground"
     )
@@ -1556,6 +1696,11 @@ private fun SettingsPanel(
     activePreset: SplitPreset,
     activePersonalBest: Run?,
     activeBestSegments: BestSegments?,
+    selectedThemeMode: AppThemeMode,
+    effectiveThemeMode: AppThemeMode,
+    useSystemTheme: Boolean,
+    onSelectedThemeModeChange: (AppThemeMode) -> Unit,
+    onUseSystemThemeChange: (Boolean) -> Unit,
     selectedTab: PresetSettingsTab,
     onSelectedTabChange: (PresetSettingsTab) -> Unit,
     draftPresetName: String,
@@ -1596,14 +1741,14 @@ private fun SettingsPanel(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF050505))
+            .background(OledBlack)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(72.dp)
-                .background(Color(0xFF080808))
+                .background(RowBlack)
                 .border(width = 0.5.dp, color = DividerColor)
                 .padding(start = 24.dp, end = 14.dp)
         ) {
@@ -1628,6 +1773,15 @@ private fun SettingsPanel(
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
             item {
+                SettingsSectionTitle("Theme")
+                ThemeModeToggle(
+                    selectedThemeMode = selectedThemeMode,
+                    effectiveThemeMode = effectiveThemeMode,
+                    useSystemTheme = useSystemTheme,
+                    onUseSystemThemeChange = onUseSystemThemeChange,
+                    onSelectedThemeModeChange = onSelectedThemeModeChange
+                )
+                Spacer(modifier = Modifier.height(16.dp))
                 SettingsSectionTitle("Presets")
                 savedPresets.forEach { preset ->
                     PresetLoadRow(
@@ -1834,6 +1988,16 @@ private fun RecordsPanel(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
     )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = matchingPersonalBest?.let { "PB ${formatDateTime(it.completedAtMillis)}" }
+            ?: "PB --",
+        color = SecondaryText,
+        fontSize = 13.sp,
+        lineHeight = 13.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
     Spacer(modifier = Modifier.height(12.dp))
     Row {
         PanelTextButton(
@@ -1873,7 +2037,7 @@ private fun RecordsHeaderRow() {
         modifier = Modifier
             .fillMaxWidth()
             .height(30.dp)
-            .background(Color(0xFF070707))
+            .background(RowBlack)
             .border(width = 0.5.dp, color = DividerColor)
             .padding(horizontal = 10.dp)
     ) {
@@ -1922,7 +2086,7 @@ private fun RecordSplitRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
-            .background(Color(0xFF0A0A0A))
+            .background(RowBlack)
             .border(width = 0.5.dp, color = DividerColor)
             .padding(horizontal = 10.dp)
     ) {
@@ -1982,7 +2146,7 @@ private fun SettingsModeTabs(
             .fillMaxWidth()
             .height(42.dp)
             .border(width = 1.dp, color = DividerColor)
-            .background(Color(0xFF070707))
+            .background(RowBlack)
             .padding(4.dp)
     ) {
         SettingsTabButton(
@@ -2009,6 +2173,63 @@ private fun SettingsModeTabs(
 }
 
 @Composable
+private fun ThemeModeToggle(
+    selectedThemeMode: AppThemeMode,
+    effectiveThemeMode: AppThemeMode,
+    useSystemTheme: Boolean,
+    onUseSystemThemeChange: (Boolean) -> Unit,
+    onSelectedThemeModeChange: (AppThemeMode) -> Unit
+) {
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+        ) {
+            Text(
+                text = "Use System Setting",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+            PanelTextButton(
+                text = if (useSystemTheme) "ON" else "OFF",
+                onClick = { onUseSystemThemeChange(!useSystemTheme) },
+                modifier = Modifier.size(width = 76.dp, height = 34.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .border(width = 1.dp, color = DividerColor)
+                .background(RowBlack)
+                .padding(4.dp)
+        ) {
+            AppThemeMode.entries.forEachIndexed { index, themeMode ->
+                if (index > 0) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                SettingsTabButton(
+                    text = themeMode.label,
+                    selected = if (useSystemTheme) {
+                        themeMode == effectiveThemeMode
+                    } else {
+                        selectedThemeMode == themeMode
+                    },
+                    onClick = { onSelectedThemeModeChange(themeMode) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsTabButton(
     text: String,
     selected: Boolean,
@@ -2020,9 +2241,9 @@ private fun SettingsTabButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            isPressed -> Color(0xFF2A2A2A)
-            selected -> Color(0xFF102015)
-            else -> Color(0xFF101010)
+            isPressed -> ActiveRowBackground
+            selected -> SuccessGreen.copy(alpha = 0.14f)
+            else -> RowBlack
         },
         animationSpec = tween(ButtonFadeMillis),
         label = "settingsTabBackground"
@@ -2088,11 +2309,11 @@ private fun PresetLoadRow(
                 width = 0.75.dp,
                 color = when {
                     isEditing -> SuccessGreen
-                    isActive -> Color(0xFF4A9EFF)
+                    isActive -> PrimaryText
                     else -> DividerColor
                 }
             )
-            .background(if (isActive || isEditing) Color(0xFF0D1410) else Color(0xFF090909))
+            .background(if (isActive || isEditing) SuccessGreen.copy(alpha = 0.08f) else RowBlack)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2183,7 +2404,7 @@ private fun LabeledTextInput(
         modifier = Modifier
             .fillMaxWidth()
             .height(40.dp)
-            .background(Color(0xFF0D0D0D))
+            .background(RowBlack)
             .border(width = 1.dp, color = DividerColor)
             .padding(horizontal = 10.dp, vertical = 10.dp)
     )
@@ -2208,7 +2429,7 @@ private fun EditableSegmentRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
-            .background(Color(0xFF0A0A0A))
+            .background(RowBlack)
             .border(width = 0.5.dp, color = DividerColor)
             .padding(horizontal = 10.dp)
     ) {
@@ -2238,7 +2459,7 @@ private fun EditableSegmentRow(
             modifier = Modifier
                 .weight(1f)
                 .height(34.dp)
-                .background(Color(0xFF050505))
+                .background(OledBlack)
                 .border(width = 0.5.dp, color = DividerColor)
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         )
@@ -2309,16 +2530,16 @@ private fun PanelTextButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF080808)
-            isPressed -> Color(0xFF2A2A2A)
-            else -> Color(0xFF101010)
+            !enabled -> RowBlack
+            isPressed -> ActiveRowBackground
+            else -> RowBlack
         },
         animationSpec = tween(ButtonFadeMillis),
         label = "panelButtonBackground"
     )
     val borderColor by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF1A1A1A)
+            !enabled -> DividerColor
             isPressed -> PrimaryText
             else -> DividerColor
         },
@@ -2359,7 +2580,7 @@ private fun CloseButton(
     val vibrate = rememberButtonVibration()
     val isPressed by interactionSource.collectIsPressedAsState()
     val backgroundColor by animateColorAsState(
-        targetValue = if (isPressed) Color(0xFF2A2A2A) else Color(0xFF101010),
+        targetValue = if (isPressed) ActiveRowBackground else RowBlack,
         animationSpec = tween(ButtonFadeMillis),
         label = "closeButtonBackground"
     )
@@ -2405,20 +2626,20 @@ private fun SplitButton(
     val isDoneState = text == "DONE"
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF070707)
-            isPressed -> Color(0xFF303030)
-            isDoneState -> Color(0xFF172016)
-            else -> Color(0xFF121212)
+            !enabled -> RowBlack
+            isPressed -> ActiveRowBackground
+            isDoneState -> SuccessGreen.copy(alpha = 0.12f)
+            else -> RowBlack
         },
         animationSpec = tween(ButtonFadeMillis),
         label = "splitButtonBackground"
     )
     val borderColor by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF333333)
+            !enabled -> DividerColor
             isPressed -> PrimaryText
             isDoneState -> SuccessGreen
-            else -> Color(0xFFDEDEDE)
+            else -> PrimaryText
         },
         animationSpec = tween(ButtonFadeMillis),
         label = "splitButtonBorder"
@@ -2491,6 +2712,12 @@ private fun formatDeltaSeconds(milliseconds: Long): String {
 
 private fun formatDuration(milliseconds: Long): String {
     return formatTimeValue(milliseconds)
+}
+
+private fun formatDateTime(milliseconds: Long): String {
+    return SimpleDateFormat("MM/dd/yy hh:mma", Locale.US)
+        .format(Date(milliseconds))
+        .lowercase(Locale.US)
 }
 
 private fun formatTimeValue(milliseconds: Long): String {
