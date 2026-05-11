@@ -19,6 +19,7 @@ The app is optimized for the Thor's 1080x1240 3.92 inch AMOLED bottom display, w
 - Records tab for viewing PB split times, PB completion date/time, best segments, and clearing PB/gold data.
 - Light, Dark, and OLED themes, plus an option to follow Android system light/dark mode.
 - Font selection for Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
+- Settings updater row that automatically checks the latest GitHub release and shows an inline `Update Now` release-page link when an update is available.
 - Subtle button animations and hardware vibration feedback.
 - Fullscreen immersive mode that hides Android status/navigation bars.
 - AndroidX Material vector icons for settings, close, and row movement controls.

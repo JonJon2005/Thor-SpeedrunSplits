@@ -1,6 +1,8 @@
 package com.example.thorspeedrunsplits
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -71,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -84,9 +87,14 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.example.thorspeedrunsplits.ui.theme.ThorSpeedrunSplitsTheme
 import java.util.Date
 import java.util.Locale
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 private data class SplitSegment(
     val name: String,
@@ -123,10 +131,25 @@ private data class PresetStats(
     val totalTimeMillis: Long = 0L
 )
 
+private data class GithubRelease(
+    val tagName: String,
+    val htmlUrl: String
+)
+
+private sealed interface UpdateCheckState {
+    data object Idle : UpdateCheckState
+    data object Checking : UpdateCheckState
+    data class UpToDate(val latestVersion: String) : UpdateCheckState
+    data class UpdateAvailable(val latestVersion: String, val releaseUrl: String) : UpdateCheckState
+    data object Failed : UpdateCheckState
+}
+
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val FontPreferenceKey = "font_mode"
+private const val LatestReleaseApiUrl =
+    "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
 private const val UntimedSplitSentinel = -1L
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
@@ -335,6 +358,7 @@ private val DefaultPreset = SplitPreset(
 )
 
 private val GoldSplit = Color(0xFFFFD84D)
+private val LinkBlue = Color(0xFF5EA1FF)
 private const val ButtonFadeMillis = 280
 private const val ButtonVibrationMillis = 18L
 private const val ButtonVibrationAmplitude = 36
@@ -518,6 +542,7 @@ private fun ThorSpeedrunSplitsApp() {
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
+    var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
@@ -605,7 +630,34 @@ private fun ThorSpeedrunSplitsApp() {
         nextEditSegmentId = preset.segments.size
     }
 
+    fun openReleasePage(url: String) {
+        appContext.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    fun checkForAppUpdate() {
+        updateCheckState = UpdateCheckState.Checking
+        coroutineScope.launch {
+            updateCheckState = try {
+                val latestRelease = fetchLatestGithubRelease()
+                if (isRemoteVersionNewer(BuildConfig.VERSION_NAME, latestRelease.tagName)) {
+                    UpdateCheckState.UpdateAvailable(
+                        latestVersion = latestRelease.tagName,
+                        releaseUrl = latestRelease.htmlUrl
+                    )
+                } else {
+                    UpdateCheckState.UpToDate(latestRelease.tagName)
+                }
+            } catch (_: Exception) {
+                UpdateCheckState.Failed
+            }
+        }
+    }
+
     LaunchedEffect(personalBestRunDao, bestSegmentsDao, splitPresetDao, appPreferenceDao) {
+        checkForAppUpdate()
+
         splitPresetDao.ensurePresetExists(
             preset = DefaultPreset.toSplitPresetEntity(),
             segments = DefaultPreset.toSplitPresetSegmentEntities()
@@ -970,6 +1022,8 @@ private fun ThorSpeedrunSplitsApp() {
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
                     selectedFontMode = selectedFontMode,
+                    updateCheckState = updateCheckState,
+                    onOpenRelease = ::openReleasePage,
                     onSelectedThemeModeChange = { themeMode ->
                         selectedThemeMode = themeMode
                         useSystemTheme = false
@@ -1738,6 +1792,8 @@ private fun SettingsPanel(
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
     selectedFontMode: AppFontMode,
+    updateCheckState: UpdateCheckState,
+    onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
@@ -1787,19 +1843,25 @@ private fun SettingsPanel(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp)
+                .height(104.dp)
                 .background(RowBlack)
                 .border(width = 0.5.dp, color = DividerColor)
                 .padding(start = 24.dp, end = 14.dp)
         ) {
-            Text(
-                text = "Split Presets",
-                color = PrimaryText,
-                fontSize = 24.sp,
-                lineHeight = 24.sp,
-                maxLines = 1
-            )
-            Spacer(modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Settings",
+                    color = PrimaryText,
+                    fontSize = 24.sp,
+                    lineHeight = 24.sp,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                UpdateCheckRow(
+                    updateCheckState = updateCheckState,
+                    onOpenRelease = onOpenRelease
+                )
+            }
             CloseButton(
                 onClick = onClose,
                 modifier = Modifier.size(52.dp)
@@ -2214,6 +2276,55 @@ private fun SettingsModeTabs(
             onClick = { onSelectedTabChange(PresetSettingsTab.Records) },
             modifier = Modifier.weight(1f)
         )
+    }
+}
+
+@Composable
+private fun UpdateCheckRow(
+    updateCheckState: UpdateCheckState,
+    onOpenRelease: (String) -> Unit
+) {
+    val statusText = when (updateCheckState) {
+        UpdateCheckState.Idle -> "Preparing update check..."
+        UpdateCheckState.Checking -> "Checking updates..."
+        is UpdateCheckState.UpToDate -> "Latest version installed | Current v${BuildConfig.VERSION_NAME}"
+        is UpdateCheckState.UpdateAvailable -> {
+            "Current v${BuildConfig.VERSION_NAME} | Latest ${updateCheckState.latestVersion}"
+        }
+        UpdateCheckState.Failed -> "Update check failed"
+    }
+    val updateAvailable = updateCheckState as? UpdateCheckState.UpdateAvailable
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = statusText,
+            color = when (updateCheckState) {
+                UpdateCheckState.Failed -> BehindRed
+                else -> SecondaryText
+            },
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            fontFamily = FontFamily.Default,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (updateAvailable != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Update Now",
+                color = LinkBlue,
+                fontSize = 13.sp,
+                lineHeight = 13.sp,
+                fontFamily = FontFamily.Default,
+                maxLines = 1,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onOpenRelease(updateAvailable.releaseUrl) }
+            )
+        }
     }
 }
 
@@ -2864,6 +2975,51 @@ private fun formatSeconds(milliseconds: Long): String {
 private fun formatDeltaSeconds(milliseconds: Long): String {
     val sign = if (milliseconds >= 0L) "+" else "-"
     return "$sign${formatTimeValue(kotlin.math.abs(milliseconds))}"
+}
+
+private suspend fun fetchLatestGithubRelease(): GithubRelease = withContext(Dispatchers.IO) {
+    val connection = (URL(LatestReleaseApiUrl).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 8_000
+        readTimeout = 8_000
+        setRequestProperty("Accept", "application/vnd.github+json")
+        setRequestProperty("User-Agent", "ThorSpeedrunSplits/${BuildConfig.VERSION_NAME}")
+    }
+
+    try {
+        val response = connection.inputStream.bufferedReader().use { it.readText() }
+        val json = JSONObject(response)
+        GithubRelease(
+            tagName = json.getString("tag_name"),
+            htmlUrl = json.getString("html_url")
+        )
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun isRemoteVersionNewer(currentVersion: String, remoteVersion: String): Boolean {
+    val currentParts = versionParts(currentVersion)
+    val remoteParts = versionParts(remoteVersion)
+    val maxSize = maxOf(currentParts.size, remoteParts.size)
+
+    for (index in 0 until maxSize) {
+        val currentPart = currentParts.getOrElse(index) { 0 }
+        val remotePart = remoteParts.getOrElse(index) { 0 }
+        if (remotePart != currentPart) {
+            return remotePart > currentPart
+        }
+    }
+
+    return false
+}
+
+private fun versionParts(version: String): List<Int> {
+    return version
+        .removePrefix("v")
+        .removePrefix("V")
+        .split(".", "-", "_")
+        .mapNotNull { part -> part.takeWhile(Char::isDigit).toIntOrNull() }
 }
 
 private fun liveActiveSplitDeltaMillis(
