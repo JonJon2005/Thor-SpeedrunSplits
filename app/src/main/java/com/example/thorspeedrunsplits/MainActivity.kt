@@ -537,7 +537,7 @@ private fun ThorSpeedrunSplitsApp() {
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
     val activeBestSegments = savedBestSegments[activePreset.presetName]
         ?.takeIf { it.segmentTimes.size == activePreset.segments.size }
-    val latestSplitDeltaMillis = if (isRunning || isFinished) {
+    val latestCompletedSplitDeltaMillis = if (isRunning || isFinished) {
         completedTimes.indices.reversed().firstNotNullOfOrNull { index ->
             val completedTime = completedTimes.getOrNull(index)
             val comparisonTime = runComparison?.splitTimes?.getOrNull(index)
@@ -550,6 +550,14 @@ private fun ThorSpeedrunSplitsApp() {
     } else {
         null
     }
+    val activeSplitDeltaMillis = if (isRunning) {
+        runComparison?.splitTimes?.getOrNull(activeSplitIndex)?.let { comparisonTime ->
+            elapsedMillis - comparisonTime
+        }
+    } else {
+        null
+    }
+    val latestSplitDeltaMillis = activeSplitDeltaMillis ?: latestCompletedSplitDeltaMillis
     val timerTextColor = latestSplitDeltaMillis?.let {
         if (it <= 0L) SuccessGreen else BehindRed
     } ?: PrimaryText
@@ -603,7 +611,9 @@ private fun ThorSpeedrunSplitsApp() {
                     displayedComparisonRun = displayedComparisonRun,
                     runComparison = runComparison,
                     goldSplitIndices = goldSplitIndices,
+                    elapsedMillis = elapsedMillis,
                     activeSplitIndex = activeSplitIndex,
+                    isRunning = isRunning,
                     resetScrollRequest = resetScrollRequest,
                     isFinished = isFinished,
                     rowHeight = rowHeight,
@@ -1187,7 +1197,9 @@ private fun SplitList(
     displayedComparisonRun: Run?,
     runComparison: Run?,
     goldSplitIndices: List<Int>,
+    elapsedMillis: Long,
     activeSplitIndex: Int,
+    isRunning: Boolean,
     resetScrollRequest: Int,
     isFinished: Boolean,
     rowHeight: Dp,
@@ -1247,9 +1259,16 @@ private fun SplitList(
             val currentRunTime = completedTimes[index]
             val displayedTime = personalBestTime ?: currentRunTime
             val isGoldSplit = index in goldSplitIndices
-            val deltaMillis = completedTimes[index]?.let { completedTime ->
-                runComparison?.splitTimes?.getOrNull(index)?.let { comparisonTime ->
-                    completedTime - comparisonTime
+            val isActiveSplit = index == activeSplitIndex && !isFinished
+            val deltaMillis = runComparison?.splitTimes?.getOrNull(index)?.let { comparisonTime ->
+                when {
+                    completedTimes[index] != null -> {
+                        completedTimes[index]?.minus(comparisonTime)
+                    }
+                    isActiveSplit && isRunning -> {
+                        elapsedMillis - comparisonTime
+                    }
+                    else -> null
                 }
             }
             SplitRow(
@@ -1269,7 +1288,7 @@ private fun SplitList(
                         else -> BehindRed
                     }
                 } ?: SecondaryText,
-                isActive = index == activeSplitIndex && !isFinished,
+                isActive = isActiveSplit,
                 rowHeight = rowHeight,
                 textSize = rowTextSize
             )

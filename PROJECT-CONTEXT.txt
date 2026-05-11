@@ -116,7 +116,8 @@ Core Features
   - If a split row has no saved PB time, completing that split during the current run temporarily shows the current run's split time in that row; resetting an unfinished run returns it to `--`.
   - If a completed run fills previously untimed PB rows, that run is saved as the new PB for the edited/current preset.
   - During a new run against a preset with a saved PB, completed rows show a `+/-` delta next to the PB split time.
-  - The main timer color follows the most recent completed split's PB comparison: green when ahead/tied, red when behind, and unchanged when there is no PB comparison.
+  - The main timer color follows the most recent available PB comparison, including the live active split while running: green when ahead/tied, red when behind, and unchanged when there is no PB comparison.
+  - While a run is active against a PB, the active row's `+/-` delta should update live against that row's PB split time: negative values count toward `0.0` in green, then positive values count upward in red once the current run passes the PB split time.
   - Presets persist best segment times separately from PBs.
   - A completed split is marked gold when its segment duration is the best ever saved for that preset/segment; gold split coloring does not override the main timer's green/red PB comparison color.
   - Updating a preset definition with the same name clears any saved run for that preset if the preset changes in a way that cannot be mapped to the old PB.
@@ -226,3 +227,4 @@ Change Log
 - 2026-05-10: Made untimed PB rows show current-run split times after splitting and save a full completed run when those missing PB rows are filled.
 - 2026-05-10: Added persisted best segments, gold split coloring, and main timer coloring based on the most recent PB split delta.
 - [APK] v0.2 released
+- 2026-05-10: Added live active-row PB delta countdown/count-up behavior so current splits show green negative time remaining against PB and red positive time once behind.
