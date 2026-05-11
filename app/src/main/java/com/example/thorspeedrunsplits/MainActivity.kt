@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
@@ -68,6 +69,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -123,6 +126,7 @@ private data class PresetStats(
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
+private const val FontPreferenceKey = "font_mode"
 private const val UntimedSplitSentinel = -1L
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
@@ -363,6 +367,29 @@ private enum class AppThemeMode(
     }
 }
 
+private enum class AppFontMode(
+    val storageValue: String,
+    val label: String,
+    val fontFamily: FontFamily
+) {
+    Default("default", "DEFAULT", FontFamily.Default),
+    Pixel("pixel", "PIXEL", FontFamily(Font(R.font.pixel))),
+    PixelBold("pixel_bold", "PIXEL BOLD", FontFamily(Font(R.font.pixel_bold))),
+    PrincessLegend(
+        "princess_legend",
+        "PRINCESS",
+        FontFamily(Font(R.font.princess_legend))
+    ),
+    JustBreathe("just_breathe", "BREATHE", FontFamily(Font(R.font.just_breathe))),
+    RedHatMan("red_hat_man", "RED HAT", FontFamily(Font(R.font.red_hat_man)));
+
+    companion object {
+        fun fromStorageValue(value: String?): AppFontMode {
+            return entries.firstOrNull { it.storageValue == value } ?: Default
+        }
+    }
+}
+
 private val OledThemeColors = AppThemeColors(
     screenBackground = Color(0xFF020202),
     rowBackground = Color(0xFF080808),
@@ -403,6 +430,7 @@ private val LightThemeColors = AppThemeColors(
 )
 
 private val LocalAppThemeColors = staticCompositionLocalOf { OledThemeColors }
+private val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 
 private fun colorsForTheme(themeMode: AppThemeMode): AppThemeColors {
     return when (themeMode) {
@@ -489,6 +517,7 @@ private fun ThorSpeedrunSplitsApp() {
     var activePreset by remember { mutableStateOf(DefaultPreset) }
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
+    var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
@@ -612,6 +641,9 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(ThemePreferenceKey)
         )
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
+        selectedFontMode = AppFontMode.fromStorageValue(
+            appPreferenceDao.getValue(FontPreferenceKey)
+        )
         activePreset = restoredPreset
         resetRun(restoredPreset.segments.size)
     }
@@ -648,7 +680,13 @@ private fun ThorSpeedrunSplitsApp() {
         selectedThemeMode
     }
 
-    CompositionLocalProvider(LocalAppThemeColors provides colorsForTheme(effectiveThemeMode)) {
+    val selectedFontFamily = selectedFontMode.fontFamily
+    val defaultTextStyle = LocalTextStyle.current
+    CompositionLocalProvider(
+        LocalAppThemeColors provides colorsForTheme(effectiveThemeMode),
+        LocalAppFontFamily provides selectedFontFamily,
+        LocalTextStyle provides defaultTextStyle.copy(fontFamily = selectedFontFamily)
+    ) {
     val elapsedMillis = when {
         isRunning -> nowMillis - startedAtMillis
         isFinished -> finishedElapsedMillis
@@ -931,6 +969,7 @@ private fun ThorSpeedrunSplitsApp() {
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
+                    selectedFontMode = selectedFontMode,
                     onSelectedThemeModeChange = { themeMode ->
                         selectedThemeMode = themeMode
                         useSystemTheme = false
@@ -956,6 +995,17 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = UseSystemThemePreferenceKey,
                                     value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
+                    onSelectedFontModeChange = { fontMode ->
+                        selectedFontMode = fontMode
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = FontPreferenceKey,
+                                    value = fontMode.storageValue
                                 )
                             )
                         }
@@ -1687,8 +1737,10 @@ private fun SettingsPanel(
     selectedThemeMode: AppThemeMode,
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
+    selectedFontMode: AppFontMode,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
+    onSelectedFontModeChange: (AppFontMode) -> Unit,
     selectedTab: PresetSettingsTab,
     onSelectedTabChange: (PresetSettingsTab) -> Unit,
     draftPresetName: String,
@@ -1768,6 +1820,11 @@ private fun SettingsPanel(
                     useSystemTheme = useSystemTheme,
                     onUseSystemThemeChange = onUseSystemThemeChange,
                     onSelectedThemeModeChange = onSelectedThemeModeChange
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                FontModeToggle(
+                    selectedFontMode = selectedFontMode,
+                    onSelectedFontModeChange = onSelectedFontModeChange
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 SettingsSectionTitle("Presets")
@@ -2218,6 +2275,52 @@ private fun ThemeModeToggle(
 }
 
 @Composable
+private fun FontModeToggle(
+    selectedFontMode: AppFontMode,
+    onSelectedFontModeChange: (AppFontMode) -> Unit
+) {
+    Column {
+        Text(
+            text = "Font",
+            color = PrimaryText,
+            fontSize = 15.sp,
+            lineHeight = 15.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        AppFontMode.entries.chunked(3).forEachIndexed { rowIndex, fontModes ->
+            if (rowIndex > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .border(width = 1.dp, color = DividerColor)
+                    .background(RowBlack)
+                    .padding(4.dp)
+            ) {
+                fontModes.forEachIndexed { index, fontMode ->
+                    if (index > 0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    SettingsTabButton(
+                        text = fontMode.label,
+                        selected = selectedFontMode == fontMode,
+                        onClick = { onSelectedFontModeChange(fontMode) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                repeat(3 - fontModes.size) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsTabButton(
     text: String,
     selected: Boolean,
@@ -2387,7 +2490,8 @@ private fun LabeledTextInput(
         textStyle = TextStyle(
             color = PrimaryText,
             fontSize = 17.sp,
-            lineHeight = 17.sp
+            lineHeight = 17.sp,
+            fontFamily = LocalAppFontFamily.current
         ),
         modifier = Modifier
             .fillMaxWidth()
@@ -2442,7 +2546,8 @@ private fun EditableSegmentRow(
             textStyle = TextStyle(
                 color = PrimaryText,
                 fontSize = 17.sp,
-                lineHeight = 17.sp
+                lineHeight = 17.sp,
+                fontFamily = LocalAppFontFamily.current
             ),
             modifier = Modifier
                 .weight(1f)

@@ -93,6 +93,7 @@ Core Features
   - Records controls should allow clearing the loaded preset's PB, clearing all saved gold/best segments, or clearing a specific saved gold/best segment row.
   - Settings includes a three-way theme toggle for Light, Dark, and OLED mode.
   - Settings includes a `Use System Setting` theme toggle. When enabled, Android light mode maps to the app Light theme and Android dark mode maps to the app Dark theme. OLED remains manual-only.
+  - Under the theme controls, settings includes a persisted font selector with Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat options.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
@@ -154,6 +155,7 @@ Technical Notes
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
 - Haptics: use Android `Vibrator`/`VibratorManager` with a subtle tick effect for button presses; app declares the normal `android.permission.VIBRATE` permission.
+- Bundled app fonts should live in `app/src/main/res/font/` with Android resource-safe lowercase underscore filenames; current bundled OTF files are `pixel.otf`, `pixel_bold.otf`, `princess_legend.otf`, `just_breathe.otf`, and `red_hat_man.otf`.
 - Storage research direction:
   - Use Room as the primary local persistence layer for app-owned custom split presets, selected/known presets, run attempts, PBs, and history because this is structured data.
   - Use DataStore only for small app preferences such as selected run profile, theme/display options, or last-opened game/category.
@@ -174,6 +176,7 @@ Technical Notes
   - Added an `app_preferences` table with a `loaded_preset_name` value so the last manually loaded preset is restored on app restart.
   - Theme mode is stored in `app_preferences` under `theme_mode`.
   - System theme following is stored in `app_preferences` under `use_system_theme`; when disabled, the last manual Light/Dark/OLED selection is reused on app restart.
+  - Font mode is stored in `app_preferences` under `font_mode`.
 - LiveSplit references:
   - https://github.com/LiveSplit/LiveSplit
   - https://livesplit.org/components/
@@ -253,3 +256,7 @@ Change Log
 - [APK] v0.3 released
 - 2026-05-11: Changed active-row PB delta behavior so the live green negative countdown no longer appears at the start of runs/splits; green active delta appears only after the current segment starts losing time relative to the previous split's PB delta, while red behind-PB count-up always appears whenever behind.
 - 2026-05-11: Made live active split green/red timer colors more saturated while leaving completed comparison delta colors unchanged.
+- 2026-05-11: Moved bundled `Pixel.otf` and `Pixel-Bold.otf` into Android font resources as `app/src/main/res/font/pixel.otf` and `app/src/main/res/font/pixel_bold.otf`.
+- 2026-05-11: Renamed added font resources to Android-safe `princess_legend.otf` and `red_hat_man.otf`.
+- 2026-05-11: Added a settings font selector below the theme controls, persisted with `font_mode`, supporting Default plus the four bundled OTF font resources.
+- 2026-05-11: Added `just_breathe.otf` to the settings font selector as the Breathe option.
