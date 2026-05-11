@@ -126,7 +126,9 @@ Core Features
   - If a completed run fills previously untimed PB rows, that run is saved as the new PB for the edited/current preset.
   - During a new run against a preset with a saved PB, completed rows show a `+/-` delta next to the PB split time.
   - The main timer color follows the most recent available PB comparison, including the live active split while running: green when ahead/tied, red when behind, and unchanged when there is no PB comparison.
-  - While a run is active against a PB, the active row's `+/-` delta should update live against that row's PB split time: negative values count toward `0.0` in green, then positive values count upward in red once the current run passes the PB split time.
+  - While a run is active against a PB, the active row should not show a green negative countdown just because the current run has not reached that PB split time yet.
+  - Active-row live green delta appears only after the current segment starts losing time relative to the PB segment, using the completed previous split delta as the baseline. Example: if the runner entered a segment 1 minute ahead and loses 5 seconds, the active row may show `-55.0` in green.
+  - Active-row live red delta should always appear and count upward whenever the current run is behind the PB split; red behind-PB count-up is not gated by the segment-loss baseline.
   - Presets persist best segment times separately from PBs.
   - A completed split is marked gold when its segment duration is the best ever saved for that preset/segment; gold split coloring does not override the main timer's green/red PB comparison color.
   - Updating a preset definition with the same name clears any saved run for that preset if the preset changes in a way that cannot be mapped to the old PB.
@@ -248,3 +250,4 @@ Change Log
 - 2026-05-10: Added `docs/images/` repository layout for README screenshots.
 - 2026-05-10: Replaced README screenshot instructions with the four provided app screenshots from `docs/images/`.
 - [APK] v0.3 released
+- 2026-05-11: Changed active-row PB delta behavior so the live green negative countdown no longer appears at the start of runs/splits; green active delta appears only after the current segment starts losing time relative to the previous split's PB delta, while red behind-PB count-up always appears whenever behind.

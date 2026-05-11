@@ -661,9 +661,12 @@ private fun ThorSpeedrunSplitsApp() {
         null
     }
     val activeSplitDeltaMillis = if (isRunning) {
-        runComparison?.splitTimes?.getOrNull(activeSplitIndex)?.let { comparisonTime ->
-            elapsedMillis - comparisonTime
-        }
+        liveActiveSplitDeltaMillis(
+            elapsedMillis = elapsedMillis,
+            activeSplitIndex = activeSplitIndex,
+            completedTimes = completedTimes,
+            runComparison = runComparison
+        )
     } else {
         null
     }
@@ -1450,7 +1453,12 @@ private fun SplitList(
                         completedTimes[index]?.minus(comparisonTime)
                     }
                     isActiveSplit && isRunning -> {
-                        elapsedMillis - comparisonTime
+                        liveActiveSplitDeltaMillis(
+                            elapsedMillis = elapsedMillis,
+                            activeSplitIndex = activeSplitIndex,
+                            completedTimes = completedTimes,
+                            runComparison = runComparison
+                        )
                     }
                     else -> null
                 }
@@ -2727,6 +2735,29 @@ private fun formatSeconds(milliseconds: Long): String {
 private fun formatDeltaSeconds(milliseconds: Long): String {
     val sign = if (milliseconds >= 0L) "+" else "-"
     return "$sign${formatTimeValue(kotlin.math.abs(milliseconds))}"
+}
+
+private fun liveActiveSplitDeltaMillis(
+    elapsedMillis: Long,
+    activeSplitIndex: Int,
+    completedTimes: List<Long?>,
+    runComparison: Run?
+): Long? {
+    val comparisonTime = runComparison?.splitTimes?.getOrNull(activeSplitIndex) ?: return null
+    val currentDelta = elapsedMillis - comparisonTime
+    if (currentDelta > 0L) {
+        return currentDelta
+    }
+
+    val segmentStartDelta = if (activeSplitIndex == 0) {
+        0L
+    } else {
+        val previousCompletedTime = completedTimes.getOrNull(activeSplitIndex - 1) ?: return null
+        val previousComparisonTime = runComparison.splitTimes.getOrNull(activeSplitIndex - 1) ?: return null
+        previousCompletedTime - previousComparisonTime
+    }
+
+    return currentDelta.takeIf { it > segmentStartDelta }
 }
 
 private fun formatDuration(milliseconds: Long): String {
