@@ -795,6 +795,8 @@ private fun ThorSpeedrunSplitsApp() {
                     onClose = { isSettingsOpen = false },
                     savedPresets = savedPresets,
                     activePreset = activePreset,
+                    activePersonalBest = savedRuns[activePreset.presetName],
+                    activeBestSegments = savedBestSegments[activePreset.presetName],
                     selectedTab = presetSettingsTab,
                     onSelectedTabChange = { presetSettingsTab = it },
                     draftPresetName = draftPresetName,
@@ -1020,6 +1022,43 @@ private fun ThorSpeedrunSplitsApp() {
                             personalBestRunDao.deleteByPresetName(preset.presetName)
                         }
                     },
+                    onClearBestSegment = { preset, index ->
+                        if (preset.presetName == activePreset.presetName) {
+                            goldSplitIndices.remove(index)
+                        }
+                        val currentBestSegments = savedBestSegments[preset.presetName]
+                        val updatedSegmentTimes = MutableList(preset.segments.size) { segmentIndex ->
+                            currentBestSegments?.segmentTimes?.getOrNull(segmentIndex)
+                        }
+                        if (index in updatedSegmentTimes.indices) {
+                            updatedSegmentTimes[index] = null
+                            val hasRemainingSegments = updatedSegmentTimes.any { it != null }
+                            if (hasRemainingSegments) {
+                                val updatedBestSegments = BestSegments(
+                                    presetName = preset.presetName,
+                                    segmentTimes = updatedSegmentTimes
+                                )
+                                savedBestSegments[preset.presetName] = updatedBestSegments
+                                coroutineScope.launch {
+                                    bestSegmentsDao.upsert(updatedBestSegments.toBestSegmentsEntity())
+                                }
+                            } else {
+                                savedBestSegments.remove(preset.presetName)
+                                coroutineScope.launch {
+                                    bestSegmentsDao.deleteByPresetName(preset.presetName)
+                                }
+                            }
+                        }
+                    },
+                    onClearBestSegments = { preset ->
+                        savedBestSegments.remove(preset.presetName)
+                        if (preset.presetName == activePreset.presetName) {
+                            goldSplitIndices.clear()
+                        }
+                        coroutineScope.launch {
+                            bestSegmentsDao.deleteByPresetName(preset.presetName)
+                        }
+                    },
                     onDeletePreset = { preset ->
                         if (preset.presetName != DefaultPreset.presetName) {
                             val deletedActivePreset = preset.presetName == activePreset.presetName
@@ -1100,7 +1139,8 @@ private data class ButtonSize(
 
 private enum class PresetSettingsTab {
     Create,
-    Edit
+    Edit,
+    Records
 }
 
 @Composable
@@ -1514,6 +1554,8 @@ private fun SettingsPanel(
     onClose: () -> Unit,
     savedPresets: List<SplitPreset>,
     activePreset: SplitPreset,
+    activePersonalBest: Run?,
+    activeBestSegments: BestSegments?,
     selectedTab: PresetSettingsTab,
     onSelectedTabChange: (PresetSettingsTab) -> Unit,
     draftPresetName: String,
@@ -1546,6 +1588,8 @@ private fun SettingsPanel(
     onSaveEditedPreset: () -> Unit,
     onLoadPreset: (SplitPreset) -> Unit,
     onClearPersonalBest: (SplitPreset) -> Unit,
+    onClearBestSegment: (SplitPreset, Int) -> Unit,
+    onClearBestSegments: (SplitPreset) -> Unit,
     onDeletePreset: (SplitPreset) -> Unit,
     onResetDefault: () -> Unit,
     modifier: Modifier = Modifier
@@ -1667,7 +1711,7 @@ private fun SettingsPanel(
                     }
                     Spacer(modifier = Modifier.height(22.dp))
                 }
-            } else {
+            } else if (selectedTab == PresetSettingsTab.Edit) {
                 item {
                     SettingsSectionTitle("Edit Selected")
                     if (editTargetPresetName == null) {
@@ -1739,9 +1783,193 @@ private fun SettingsPanel(
                         Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
+            } else {
+                item {
+                    RecordsPanel(
+                        preset = activePreset,
+                        personalBest = activePersonalBest,
+                        bestSegments = activeBestSegments,
+                        onClearPersonalBest = { onClearPersonalBest(activePreset) },
+                        onClearBestSegment = { index -> onClearBestSegment(activePreset, index) },
+                        onClearBestSegments = { onClearBestSegments(activePreset) }
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
             }
         }
     }
+}
+
+@Composable
+private fun RecordsPanel(
+    preset: SplitPreset,
+    personalBest: Run?,
+    bestSegments: BestSegments?,
+    onClearPersonalBest: () -> Unit,
+    onClearBestSegment: (Int) -> Unit,
+    onClearBestSegments: () -> Unit
+) {
+    val matchingPersonalBest = personalBest
+        ?.takeIf { it.splitTimes.size == preset.segments.size }
+    val matchingBestSegments = bestSegments
+        ?.takeIf { it.segmentTimes.size == preset.segments.size }
+    val hasPersonalBest = matchingPersonalBest != null
+    val hasBestSegments = matchingBestSegments?.segmentTimes?.any { it != null } == true
+
+    SettingsSectionTitle("Records")
+    Text(
+        text = "${preset.gameTitle} - ${preset.category}",
+        color = SuccessGreen,
+        fontSize = 18.sp,
+        lineHeight = 18.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "${preset.presetName}  |  ${preset.segments.size} rows",
+        color = SecondaryText,
+        fontSize = 13.sp,
+        lineHeight = 13.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Row {
+        PanelTextButton(
+            text = "CLEAR PB",
+            onClick = onClearPersonalBest,
+            enabled = hasPersonalBest,
+            modifier = Modifier.size(width = 112.dp, height = 40.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = "CLEAR GOLD",
+            onClick = onClearBestSegments,
+            enabled = hasBestSegments,
+            modifier = Modifier.size(width = 126.dp, height = 40.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
+    RecordsHeaderRow()
+    preset.segments.forEachIndexed { index, split ->
+        val pbTime = matchingPersonalBest?.splitTimes?.getOrNull(index)
+        val bestSegmentTime = matchingBestSegments?.segmentTimes?.getOrNull(index)
+        RecordSplitRow(
+            index = index,
+            split = split,
+            personalBestTime = pbTime,
+            bestSegmentTime = bestSegmentTime,
+            onClearBestSegment = { onClearBestSegment(index) }
+        )
+    }
+}
+
+@Composable
+private fun RecordsHeaderRow() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(30.dp)
+            .background(Color(0xFF070707))
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 10.dp)
+    ) {
+        Text(
+            text = "Split",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = "PB",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(78.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = "GOLD",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(78.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(66.dp))
+    }
+}
+
+@Composable
+private fun RecordSplitRow(
+    index: Int,
+    split: SplitSegment,
+    personalBestTime: Long?,
+    bestSegmentTime: Long?,
+    onClearBestSegment: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(Color(0xFF0A0A0A))
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(6.dp)
+                .fillMaxHeight(0.65f)
+                .background(split.markerColor)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = "${index + 1}. ${split.name}",
+            color = PrimaryText,
+            fontSize = 15.sp,
+            lineHeight = 15.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = personalBestTime?.let(::formatSeconds) ?: "--",
+            color = if (personalBestTime == null) SecondaryText else PrimaryText,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(78.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = bestSegmentTime?.let(::formatSeconds) ?: "--",
+            color = if (bestSegmentTime == null) SecondaryText else GoldSplit,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(78.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = "X",
+            onClick = onClearBestSegment,
+            enabled = bestSegmentTime != null,
+            modifier = Modifier.size(width = 66.dp, height = 30.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
 }
 
 @Composable
@@ -1768,6 +1996,13 @@ private fun SettingsModeTabs(
             text = "Edit Preset",
             selected = selectedTab == PresetSettingsTab.Edit,
             onClick = { onSelectedTabChange(PresetSettingsTab.Edit) },
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        SettingsTabButton(
+            text = "Records",
+            selected = selectedTab == PresetSettingsTab.Records,
+            onClick = { onSelectedTabChange(PresetSettingsTab.Records) },
             modifier = Modifier.weight(1f)
         )
     }

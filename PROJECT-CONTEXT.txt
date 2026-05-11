@@ -83,6 +83,8 @@ Core Features
   - Each preset row in settings should include a compact clear-PB action that deletes that preset's saved personal best without deleting the preset.
   - Create preset and edit-selected-preset workflows should be visually separate and controlled by tabs so only one form is shown at a time.
   - Row editor controls should use arrows for move up/down and `X` for row deletion.
+  - Settings includes a Records tab for the currently loaded preset, showing saved PB split times and saved best-segment/gold times.
+  - Records controls should allow clearing the loaded preset's PB, clearing all saved gold/best segments, or clearing a specific saved gold/best segment row.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
@@ -228,3 +230,4 @@ Change Log
 - 2026-05-10: Added persisted best segments, gold split coloring, and main timer coloring based on the most recent PB split delta.
 - [APK] v0.2 released
 - 2026-05-10: Added live active-row PB delta countdown/count-up behavior so current splits show green negative time remaining against PB and red positive time once behind.
+- 2026-05-10: Added a settings Records tab for the loaded preset with PB split display, best-segment/gold display, clear-PB, clear-all-gold, and per-row gold reset controls.
