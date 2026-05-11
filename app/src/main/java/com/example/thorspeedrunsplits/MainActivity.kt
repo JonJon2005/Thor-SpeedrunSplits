@@ -20,7 +20,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -42,6 +41,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
@@ -59,9 +64,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -1637,54 +1641,11 @@ private fun SettingsButton(
             )
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        GearIcon(
-            color = PrimaryText,
+        Icon(
+            imageVector = Icons.Filled.Settings,
+            contentDescription = "Settings",
+            tint = PrimaryText,
             modifier = Modifier.size(28.dp)
-        )
-    }
-}
-
-@Composable
-private fun GearIcon(
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        val strokeWidth = size.minDimension * 0.11f
-        val center = this.center
-        val outerRadius = size.minDimension * 0.32f
-        val innerRadius = size.minDimension * 0.12f
-        val toothStart = size.minDimension * 0.38f
-        val toothEnd = size.minDimension * 0.48f
-
-        repeat(6) { tooth ->
-            val angleRadians = Math.toRadians((tooth * 60).toDouble())
-            val start = androidx.compose.ui.geometry.Offset(
-                x = center.x + kotlin.math.cos(angleRadians).toFloat() * toothStart,
-                y = center.y + kotlin.math.sin(angleRadians).toFloat() * toothStart
-            )
-            val end = androidx.compose.ui.geometry.Offset(
-                x = center.x + kotlin.math.cos(angleRadians).toFloat() * toothEnd,
-                y = center.y + kotlin.math.sin(angleRadians).toFloat() * toothEnd
-            )
-            drawLine(
-                color = color,
-                start = start,
-                end = end,
-                strokeWidth = strokeWidth,
-                cap = StrokeCap.Round
-            )
-        }
-
-        drawCircle(
-            color = color,
-            radius = outerRadius,
-            style = Stroke(width = strokeWidth)
-        )
-        drawCircle(
-            color = color,
-            radius = innerRadius,
-            style = Stroke(width = strokeWidth)
         )
     }
 }
@@ -2464,15 +2425,17 @@ private fun EditableSegmentRow(
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
-        PanelTextButton(
-            text = "↑",
+        PanelIconButton(
+            imageVector = Icons.Filled.KeyboardArrowUp,
+            contentDescription = "Move split up",
             onClick = onMoveUp,
             enabled = canMoveUp,
             modifier = Modifier.size(width = 44.dp, height = 30.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
-        PanelTextButton(
-            text = "↓",
+        PanelIconButton(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = "Move split down",
             onClick = onMoveDown,
             enabled = canMoveDown,
             modifier = Modifier.size(width = 44.dp, height = 30.dp)
@@ -2572,6 +2535,61 @@ private fun PanelTextButton(
 }
 
 @Composable
+private fun PanelIconButton(
+    imageVector: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> RowBlack
+            isPressed -> ActiveRowBackground
+            else -> RowBlack
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "panelIconButtonBackground"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> DividerColor
+            isPressed -> PrimaryText
+            else -> DividerColor
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "panelIconButtonBorder"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(width = 1.5.dp, color = borderColor)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
+            )
+            .padding(4.dp)
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            tint = if (enabled) PrimaryText else SecondaryText,
+            modifier = Modifier.size(22.dp)
+        )
+    }
+}
+
+@Composable
 private fun CloseButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -2604,10 +2622,11 @@ private fun CloseButton(
                 }
             )
     ) {
-        FadingButtonText(
-            text = "X",
-            color = PrimaryText,
-            fontSize = 24.sp
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Close settings",
+            tint = PrimaryText,
+            modifier = Modifier.size(30.dp)
         )
     }
 }

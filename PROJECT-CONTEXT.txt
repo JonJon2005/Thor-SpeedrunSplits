@@ -50,6 +50,7 @@ Design Language
   - Split rows should use the full app width; title and bottom controls may keep side padding.
   - Buttons should use noticeable but restrained fade animations for visibility, text changes, scale changes, pressed highlights, and color/border state changes; keep animations consistent across controls.
   - Buttons should trigger subtle hardware vibration feedback on press to suit the AYN Thor's built-in controller/touch hardware.
+  - Use built-in AndroidX Material vector icons for standard actions where available, including settings, close, and row move up/down controls.
   - App supports three display themes from settings: Light, Dark, and OLED.
   - OLED mode is the original near-black AMOLED-friendly look; Dark mode uses lifted charcoal surfaces; Light mode uses light neutral surfaces.
   - Ahead/behind timer and delta colors are theme-aware: OLED and Dark keep the original bright green/red values, while Light uses darker green/red values for contrast. Gold split coloring remains gold.
@@ -242,3 +243,4 @@ Change Log
 - 2026-05-10: Added persisted Light/Dark/OLED theme selection in settings and applied theme-aware palettes across the timer screen and settings UI while preserving green/red/gold comparison colors.
 - 2026-05-10: Adjusted Light mode comparison colors to darker green/red values while keeping OLED and Dark mode comparison colors unchanged.
 - 2026-05-10: Added PB completion date/time display to the Records tab and added a persisted system-theme toggle that maps Android Light/Dark to app Light/Dark while keeping OLED as a manual theme.
+- 2026-05-10: Replaced the custom settings gear drawing, text up/down arrows, and text close button with AndroidX Material vector icons.
