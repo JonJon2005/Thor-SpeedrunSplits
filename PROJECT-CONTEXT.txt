@@ -45,6 +45,7 @@ Design Language
   - App runs in immersive fullscreen: Android status bar and navigation/swipe bar should be hidden because the AYN Thor has physical/back-home controls available for this use case.
   - Timer and split times use one decimal place without a seconds suffix.
   - Timing displays should omit the minutes column until it is reached: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
+  - Right-aligned split time and delta columns must reserve enough width for wider custom font numerals so decimal digits are not clipped.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
   - Use smaller row/title/timer typography on the wide 31:27 screen than on portrait phone previews.
   - Split rows should use the full app width; title and bottom controls may keep side padding.
@@ -94,6 +95,7 @@ Core Features
   - Settings includes a three-way theme toggle for Light, Dark, and OLED mode.
   - Settings includes a `Use System Setting` theme toggle. When enabled, Android light mode maps to the app Light theme and Android dark mode maps to the app Dark theme. OLED remains manual-only.
   - Under the theme controls, settings includes a persisted font selector with Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat options.
+  - Font selector buttons should preview their own font and not change typography based on the currently selected app font.
 - Split preset feature:
   - Users should be able to create split presets.
   - A split preset defines the reusable structure for a run, not run results.
@@ -260,3 +262,5 @@ Change Log
 - 2026-05-11: Renamed added font resources to Android-safe `princess_legend.otf` and `red_hat_man.otf`.
 - 2026-05-11: Added a settings font selector below the theme controls, persisted with `font_mode`, supporting Default plus the four bundled OTF font resources.
 - 2026-05-11: Added `just_breathe.otf` to the settings font selector as the Breathe option.
+- 2026-05-11: Widened split row right-side time and delta columns so custom font timing text does not clip decimal digits.
+- 2026-05-11: Updated font selector buttons so each option renders using its own font instead of inheriting the currently selected app font.

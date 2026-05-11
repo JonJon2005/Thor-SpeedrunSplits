@@ -1605,7 +1605,7 @@ private fun SplitRow(
                 lineHeight = textSize,
                 maxLines = 1,
                 textAlign = TextAlign.End,
-                modifier = Modifier.width(76.dp)
+                modifier = Modifier.width(92.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
@@ -1616,7 +1616,7 @@ private fun SplitRow(
             lineHeight = textSize,
             maxLines = 1,
             textAlign = TextAlign.End,
-            modifier = Modifier.width(72.dp)
+            modifier = Modifier.width(92.dp)
         )
     }
 }
@@ -2308,6 +2308,7 @@ private fun FontModeToggle(
                         text = fontMode.label,
                         selected = selectedFontMode == fontMode,
                         onClick = { onSelectedFontModeChange(fontMode) },
+                        fontFamily = fontMode.fontFamily,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -2325,6 +2326,7 @@ private fun SettingsTabButton(
     text: String,
     selected: Boolean,
     onClick: () -> Unit,
+    fontFamily: FontFamily? = null,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -2364,7 +2366,8 @@ private fun SettingsTabButton(
         FadingButtonText(
             text = text,
             color = if (selected) SuccessGreen else PrimaryText,
-            fontSize = 14.sp
+            fontSize = 14.sp,
+            fontFamily = fontFamily
         )
     }
 }
@@ -2834,6 +2837,7 @@ private fun FadingButtonText(
     text: String,
     color: Color,
     fontSize: TextUnit,
+    fontFamily: FontFamily? = null,
     modifier: Modifier = Modifier
 ) {
     Crossfade(
@@ -2847,6 +2851,7 @@ private fun FadingButtonText(
             color = color,
             fontSize = fontSize,
             lineHeight = fontSize,
+            fontFamily = fontFamily,
             maxLines = 1
         )
     }
