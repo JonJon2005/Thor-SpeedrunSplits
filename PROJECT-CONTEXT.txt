@@ -93,6 +93,7 @@ Core Features
   - Preset row action buttons must have enough vertical room to display labels fully.
   - Each preset row in settings should include a compact clear-PB action that deletes that preset's saved personal best without deleting the preset.
   - Create preset and edit-selected-preset workflows should be visually separate and controlled by tabs so only one form is shown at a time.
+  - Pressing `EDIT` on a custom preset should switch to the Edit tab and automatically scroll the settings panel to the edit form.
   - Row editor controls should use arrows for move up/down and `X` for row deletion.
   - Settings includes a Records tab for the currently loaded preset, showing saved PB split times and saved best-segment/gold times.
   - Records should show the loaded preset PB completion date/time in `mm/dd/yy 00:00am/pm` style when a PB exists.
@@ -122,6 +123,7 @@ Core Features
   - Attempted runs increment when a run starts, even if the run is not completed.
   - Total time tracks active time spent running that preset and updates dynamically while the run is active.
   - Attempted runs and total time are shown directly above the main timer inside the bottom controls region.
+  - Sum of Best is shown above attempted runs only when every split in the loaded preset has a saved best segment/gold; it is hidden if any split is missing one.
   - The default example preset is provided by code and is not stored as a custom preset row.
   - The loaded preset selection should persist through app close/reopen until the user manually loads a different preset in settings.
 - Run/PB direction from user:
@@ -286,3 +288,5 @@ Change Log
 - 2026-05-21: Bumped app version metadata to v0.4.2/versionCode 6.
 - 2026-05-21: Scaled long title/category text within a safer title region and moved attempt/total-time counters directly above the main timer inside the bottom controls band.
 - 2026-05-21: Changed game title and category alignment from centered to left-aligned while preserving right-side title padding for the settings button.
+- 2026-05-21: Made custom preset `EDIT` automatically switch to the Edit tab and scroll the settings panel to the edit form.
+- 2026-05-21: Added bottom stats `Sum of Best` display above attempts when every split in the loaded preset has a saved best segment/gold.

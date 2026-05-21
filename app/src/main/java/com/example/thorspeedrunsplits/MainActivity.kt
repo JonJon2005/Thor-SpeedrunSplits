@@ -544,6 +544,7 @@ private fun ThorSpeedrunSplitsApp() {
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
+    var editPresetScrollRequest by remember { mutableStateOf(0) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
     }
@@ -749,6 +750,13 @@ private fun ThorSpeedrunSplitsApp() {
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
     val activeBestSegments = savedBestSegments[activePreset.presetName]
         ?.takeIf { it.segmentTimes.size == activePreset.segments.size }
+    val sumOfBestText = activeBestSegments
+        ?.segmentTimes
+        ?.takeIf { segmentTimes ->
+            segmentTimes.size == activePreset.segments.size && segmentTimes.all { it != null }
+        }
+        ?.sumOf { it ?: 0L }
+        ?.let(::formatDuration)
     val latestCompletedSplitDeltaMillis = if (isRunning || isFinished) {
         completedTimes.indices.reversed().firstNotNullOfOrNull { index ->
             val completedTime = completedTimes.getOrNull(index)
@@ -849,6 +857,7 @@ private fun ThorSpeedrunSplitsApp() {
                     buttonSize = splitButtonSize,
                     resetButtonSize = resetButtonSize,
                     showResetButton = isRunning,
+                    sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
                     timerText = formatSeconds(elapsedMillis),
@@ -1062,6 +1071,7 @@ private fun ThorSpeedrunSplitsApp() {
                         }
                     },
                     selectedTab = presetSettingsTab,
+                    editPresetScrollRequest = editPresetScrollRequest,
                     onSelectedTabChange = { presetSettingsTab = it },
                     draftPresetName = draftPresetName,
                     onDraftPresetNameChange = { draftPresetName = it },
@@ -1155,6 +1165,7 @@ private fun ThorSpeedrunSplitsApp() {
                         if (preset.presetName != DefaultPreset.presetName) {
                             startEditingPreset(preset)
                             presetSettingsTab = PresetSettingsTab.Edit
+                            editPresetScrollRequest += 1
                         }
                     },
                     onEditSegmentNameChange = { index, name ->
@@ -1488,6 +1499,7 @@ private fun adjustedTitleFontSize(text: String, baseSize: TextUnit): TextUnit {
 
 @Composable
 private fun PresetStatsPanel(
+    sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
     modifier: Modifier = Modifier
@@ -1497,6 +1509,16 @@ private fun PresetStatsPanel(
         verticalArrangement = Arrangement.Center,
         modifier = modifier
     ) {
+        if (sumOfBestText != null) {
+            Text(
+                text = "Sum of Best: $sumOfBestText",
+                color = SecondaryText,
+                fontSize = 13.sp,
+                lineHeight = 13.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+        }
         Text(
             text = "Attempts $attemptedRuns",
             color = SecondaryText,
@@ -1699,6 +1721,7 @@ private fun BottomControls(
     buttonSize: ButtonSize,
     resetButtonSize: ButtonSize,
     showResetButton: Boolean,
+    sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
     timerText: String,
@@ -1752,6 +1775,7 @@ private fun BottomControls(
             verticalArrangement = Arrangement.Bottom
         ) {
             PresetStatsPanel(
+                sumOfBestText = sumOfBestText,
                 attemptedRuns = attemptedRuns,
                 totalTimeText = totalTimeText
             )
@@ -1827,6 +1851,7 @@ private fun SettingsPanel(
     onUseSystemThemeChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     selectedTab: PresetSettingsTab,
+    editPresetScrollRequest: Int,
     onSelectedTabChange: (PresetSettingsTab) -> Unit,
     draftPresetName: String,
     onDraftPresetNameChange: (String) -> Unit,
@@ -1864,6 +1889,14 @@ private fun SettingsPanel(
     onResetDefault: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val settingsListState = rememberLazyListState()
+
+    LaunchedEffect(editPresetScrollRequest, selectedTab) {
+        if (editPresetScrollRequest > 0 && selectedTab == PresetSettingsTab.Edit) {
+            settingsListState.animateScrollToItem(1)
+        }
+    }
+
     Column(
         modifier = modifier
             .background(OledBlack)
@@ -1898,6 +1931,7 @@ private fun SettingsPanel(
         }
 
         LazyColumn(
+            state = settingsListState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
