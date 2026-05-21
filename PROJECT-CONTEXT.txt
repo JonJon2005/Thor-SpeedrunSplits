@@ -297,3 +297,4 @@ Change Log
 - 2026-05-21: Added a dimmed confirmation dialog for preset list `DELETE`, with cancel and red confirm actions.
 - 2026-05-21: Widened the preset delete confirmation dialog and centered its prompt on one line.
 - 2026-05-21: Centered the preset delete confirmation buttons and made cancel/confirm each take half of the dialog width.
+- [APK] v0.4.2 released
