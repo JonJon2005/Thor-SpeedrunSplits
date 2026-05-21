@@ -823,7 +823,10 @@ private fun ThorSpeedrunSplitsApp() {
                     fontSize = titleSize,
                     modifier = Modifier
                         .height(titleHeight)
-                        .padding(horizontal = 24.dp)
+                        .padding(
+                            start = 24.dp,
+                            end = if (isWideThorShape) 152.dp else 24.dp
+                        )
                 )
                 SplitList(
                     splits = activePreset.segments,
@@ -846,6 +849,8 @@ private fun ThorSpeedrunSplitsApp() {
                     buttonSize = splitButtonSize,
                     resetButtonSize = resetButtonSize,
                     showResetButton = isRunning,
+                    attemptedRuns = activePresetStats.attemptedRuns,
+                    totalTimeText = formatDuration(displayedTotalTimeMillis),
                     timerText = formatSeconds(elapsedMillis),
                     timerColor = timerTextColor,
                     timerSize = timerSize,
@@ -976,14 +981,6 @@ private fun ThorSpeedrunSplitsApp() {
                     }
                 )
             }
-
-            PresetStatsPanel(
-                attemptedRuns = activePresetStats.attemptedRuns,
-                totalTimeText = formatDuration(displayedTotalTimeMillis),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 12.dp, start = 24.dp)
-            )
 
             AnimatedVisibility(
                 visible = isSettingsOpen,
@@ -1447,26 +1444,46 @@ private fun RunTitle(
     fontSize: TextUnit,
     modifier: Modifier = Modifier
 ) {
+    val gameFontSize = adjustedTitleFontSize(game, fontSize)
+    val categoryFontSize = adjustedTitleFontSize(category, fontSize)
+
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center,
         modifier = modifier.fillMaxWidth()
     ) {
         Text(
             text = game,
             color = PrimaryText,
-            fontSize = fontSize,
-            lineHeight = fontSize,
-            maxLines = 1
+            fontSize = gameFontSize,
+            lineHeight = gameFontSize,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth()
         )
         Text(
             text = category,
             color = PrimaryText,
-            fontSize = fontSize,
-            lineHeight = fontSize,
-            maxLines = 1
+            fontSize = categoryFontSize,
+            lineHeight = categoryFontSize,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+private fun adjustedTitleFontSize(text: String, baseSize: TextUnit): TextUnit {
+    val scale = when {
+        text.length >= 36 -> 0.58f
+        text.length >= 30 -> 0.66f
+        text.length >= 24 -> 0.78f
+        text.length >= 18 -> 0.9f
+        else -> 1f
+    }
+    return (baseSize.value * scale).sp
 }
 
 @Composable
@@ -1476,7 +1493,7 @@ private fun PresetStatsPanel(
     modifier: Modifier = Modifier
 ) {
     Column(
-        horizontalAlignment = Alignment.Start,
+        horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.Center,
         modifier = modifier
     ) {
@@ -1682,6 +1699,8 @@ private fun BottomControls(
     buttonSize: ButtonSize,
     resetButtonSize: ButtonSize,
     showResetButton: Boolean,
+    attemptedRuns: Int,
+    totalTimeText: String,
     timerText: String,
     timerColor: Color,
     timerSize: TextUnit,
@@ -1728,13 +1747,23 @@ private fun BottomControls(
             }
         }
         Spacer(modifier = Modifier.weight(1f))
-        Text(
-            text = timerText,
-            color = timerColor,
-            fontSize = timerSize,
-            lineHeight = timerSize,
-            maxLines = 1
-        )
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.Bottom
+        ) {
+            PresetStatsPanel(
+                attemptedRuns = attemptedRuns,
+                totalTimeText = totalTimeText
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = timerText,
+                color = timerColor,
+                fontSize = timerSize,
+                lineHeight = timerSize,
+                maxLines = 1
+            )
+        }
     }
 }
 

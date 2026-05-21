@@ -47,6 +47,8 @@ Design Language
   - Timing displays should omit the minutes column until it is reached: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
   - Right-aligned split time and delta columns must reserve enough width for wider custom font numerals so decimal digits are not clipped.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
+  - Long game/category title text should scale down and ellipsize within the title region instead of overlapping stats, settings, or split rows.
+  - Game title and run category should be left-aligned in the title region while still reserving right-side space for the settings button on the Thor layout.
   - Use smaller row/title/timer typography on the wide 31:27 screen than on portrait phone previews.
   - Split rows should use the full app width; title and bottom controls may keep side padding.
   - Buttons should use noticeable but restrained fade animations for visibility, text changes, scale changes, pressed highlights, and color/border state changes; keep animations consistent across controls.
@@ -119,7 +121,7 @@ Core Features
   - Presets store two per-preset stats: attempted runs and total time.
   - Attempted runs increment when a run starts, even if the run is not completed.
   - Total time tracks active time spent running that preset and updates dynamically while the run is active.
-  - Attempted runs and total time are shown in the top-left of the app.
+  - Attempted runs and total time are shown directly above the main timer inside the bottom controls region.
   - The default example preset is provided by code and is not stored as a custom preset row.
   - The loaded preset selection should persist through app close/reopen until the user manually loads a different preset in settings.
 - Run/PB direction from user:
@@ -157,7 +159,7 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.4.1"` and `versionCode = 5`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.4.2"` and `versionCode = 6`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
@@ -281,3 +283,6 @@ Change Log
 - 2026-05-11: Replaced the default Android launcher icons with the provided generated icon assets, moved the 512px store icon to `docs/images/play_store_512.png`, and removed the temporary root `android/` icon staging folder.
 - 2026-05-11: Bumped app version metadata to v0.4.1/versionCode 5.
 - [APK] v0.4.1 released
+- 2026-05-21: Bumped app version metadata to v0.4.2/versionCode 6.
+- 2026-05-21: Scaled long title/category text within a safer title region and moved attempt/total-time counters directly above the main timer inside the bottom controls band.
+- 2026-05-21: Changed game title and category alignment from centered to left-aligned while preserving right-side title padding for the settings button.
