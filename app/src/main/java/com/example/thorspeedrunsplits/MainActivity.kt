@@ -545,6 +545,7 @@ private fun ThorSpeedrunSplitsApp() {
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
     var editPresetScrollRequest by remember { mutableStateOf(0) }
+    var presetPendingDelete by remember { mutableStateOf<SplitPreset?>(null) }
     val savedPresets = remember {
         mutableStateListOf<SplitPreset>().apply { add(DefaultPreset) }
     }
@@ -611,6 +612,35 @@ private fun ThorSpeedrunSplitsApp() {
                     value = preset.presetName
                 )
             )
+        }
+    }
+
+    fun deletePreset(preset: SplitPreset) {
+        if (preset.presetName == DefaultPreset.presetName) {
+            return
+        }
+
+        val deletedActivePreset = preset.presetName == activePreset.presetName
+        val deleteIndex = savedPresets.indexOfFirst {
+            it.presetName == preset.presetName
+        }
+        if (deleteIndex >= 0) {
+            savedPresets.removeAt(deleteIndex)
+            savedRuns.remove(preset.presetName)
+            savedBestSegments.remove(preset.presetName)
+            presetStats.remove(preset.presetName)
+            coroutineScope.launch {
+                personalBestRunDao.deleteByPresetName(preset.presetName)
+                bestSegmentsDao.deleteByPresetName(preset.presetName)
+                splitPresetDao.deleteByPresetName(preset.presetName)
+            }
+            if (editTargetPresetName == preset.presetName) {
+                editTargetPresetName = null
+                editSegments.clear()
+            }
+        }
+        if (deletedActivePreset) {
+            loadPreset(DefaultPreset)
         }
     }
 
@@ -1019,7 +1049,10 @@ private fun ThorSpeedrunSplitsApp() {
                     .fillMaxSize()
             ) {
                 SettingsPanel(
-                    onClose = { isSettingsOpen = false },
+                    onClose = {
+                        presetPendingDelete = null
+                        isSettingsOpen = false
+                    },
                     savedPresets = savedPresets,
                     activePreset = activePreset,
                     activePersonalBest = savedRuns[activePreset.presetName],
@@ -1336,28 +1369,7 @@ private fun ThorSpeedrunSplitsApp() {
                     },
                     onDeletePreset = { preset ->
                         if (preset.presetName != DefaultPreset.presetName) {
-                            val deletedActivePreset = preset.presetName == activePreset.presetName
-                            val deleteIndex = savedPresets.indexOfFirst {
-                                it.presetName == preset.presetName
-                            }
-                            if (deleteIndex >= 0) {
-                                savedPresets.removeAt(deleteIndex)
-                                savedRuns.remove(preset.presetName)
-                                savedBestSegments.remove(preset.presetName)
-                                presetStats.remove(preset.presetName)
-                                coroutineScope.launch {
-                                    personalBestRunDao.deleteByPresetName(preset.presetName)
-                                    bestSegmentsDao.deleteByPresetName(preset.presetName)
-                                    splitPresetDao.deleteByPresetName(preset.presetName)
-                                }
-                                if (editTargetPresetName == preset.presetName) {
-                                    editTargetPresetName = null
-                                    editSegments.clear()
-                                }
-                            }
-                            if (deletedActivePreset) {
-                                loadPreset(DefaultPreset)
-                            }
+                            presetPendingDelete = preset
                         }
                     },
                     onResetDefault = {
@@ -1380,6 +1392,33 @@ private fun ThorSpeedrunSplitsApp() {
                     modifier = Modifier
                         .fillMaxSize()
                 )
+            }
+
+            AnimatedVisibility(
+                visible = presetPendingDelete != null,
+                enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
+                    scaleIn(
+                        animationSpec = tween(ButtonFadeMillis),
+                        initialScale = 0.96f
+                    ),
+                exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
+                    scaleOut(
+                        animationSpec = tween(ButtonFadeMillis),
+                        targetScale = 0.98f
+                    ),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                val presetToDelete = presetPendingDelete
+                if (presetToDelete != null) {
+                    DeletePresetConfirmationDialog(
+                        onCancel = { presetPendingDelete = null },
+                        onConfirm = {
+                            presetPendingDelete = null
+                            deletePreset(presetToDelete)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             AnimatedVisibility(
@@ -1792,6 +1831,62 @@ private fun BottomControls(
 }
 
 @Composable
+private fun DeletePresetConfirmationDialog(
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .background(Color(0xCC000000))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+            .padding(horizontal = 40.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(RowBlack)
+                .border(width = 1.5.dp, color = DividerColor)
+                .padding(horizontal = 24.dp, vertical = 22.dp)
+        ) {
+            Text(
+                text = "Are you sure you want to delete this preset?",
+                color = PrimaryText,
+                fontSize = 19.sp,
+                lineHeight = 19.sp,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                PanelTextButton(
+                    text = "CANCEL",
+                    onClick = onCancel,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                )
+                DangerPanelTextButton(
+                    text = "CONFIRM",
+                    onClick = onConfirm,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1961,7 +2056,6 @@ private fun SettingsPanel(
                         canDelete = preset.presetName != DefaultPreset.presetName,
                         onLoad = { onLoadPreset(preset) },
                         onEdit = { onStartEditPreset(preset) },
-                        onClearPersonalBest = { onClearPersonalBest(preset) },
                         onDelete = { onDeletePreset(preset) }
                     )
                 }
@@ -2016,19 +2110,19 @@ private fun SettingsPanel(
                     Spacer(modifier = Modifier.height(12.dp))
                     Row {
                         PanelTextButton(
-                            text = "+ ROW",
+                            text = "ADD ROW",
                             onClick = onAddDraftSegment,
                             modifier = Modifier.size(width = 96.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
-                            text = "SAVE + LOAD",
+                            text = "SAVE PRESET",
                             onClick = onSaveDraftPreset,
                             modifier = Modifier.size(width = 138.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
-                            text = "RESET DEFAULT",
+                            text = "RESET TO DEFAULT",
                             onClick = onResetDefault,
                             modifier = Modifier.size(width = 148.dp, height = 40.dp)
                         )
@@ -2093,13 +2187,13 @@ private fun SettingsPanel(
                         Spacer(modifier = Modifier.height(12.dp))
                         Row {
                             PanelTextButton(
-                                text = "+ ROW",
+                                text = "ADD ROW",
                                 onClick = onAddEditSegment,
                                 modifier = Modifier.size(width = 96.dp, height = 40.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             PanelTextButton(
-                                text = "SAVE EDIT",
+                                text = "SAVE CHANGES",
                                 onClick = onSaveEditedPreset,
                                 modifier = Modifier.size(width = 126.dp, height = 40.dp)
                             )
@@ -2178,7 +2272,7 @@ private fun RecordsPanel(
         )
         Spacer(modifier = Modifier.width(10.dp))
         PanelTextButton(
-            text = "CLEAR GOLD",
+            text = "CLEAR GOLDS",
             onClick = onClearBestSegments,
             enabled = hasBestSegments,
             modifier = Modifier.size(width = 126.dp, height = 40.dp)
@@ -2296,8 +2390,9 @@ private fun RecordSplitRow(
             modifier = Modifier.width(78.dp)
         )
         Spacer(modifier = Modifier.width(10.dp))
-        PanelTextButton(
-            text = "X",
+        PanelIconButton(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Clear best segment",
             onClick = onClearBestSegment,
             enabled = bestSegmentTime != null,
             modifier = Modifier.size(width = 66.dp, height = 30.dp)
@@ -2566,7 +2661,6 @@ private fun PresetLoadRow(
     canDelete: Boolean,
     onLoad: () -> Unit,
     onEdit: () -> Unit,
-    onClearPersonalBest: () -> Unit,
     onDelete: () -> Unit
 ) {
     Column(
@@ -2621,12 +2715,6 @@ private fun PresetLoadRow(
                 onClick = onLoad,
                 modifier = Modifier.size(width = 76.dp, height = 34.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            PanelTextButton(
-                text = "CLR PB",
-                onClick = onClearPersonalBest,
-                modifier = Modifier.size(width = 86.dp, height = 34.dp)
-            )
             if (canDelete) {
                 Spacer(modifier = Modifier.width(8.dp))
                 PanelTextButton(
@@ -2636,9 +2724,9 @@ private fun PresetLoadRow(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 PanelTextButton(
-                    text = "DEL",
+                    text = "DELETE",
                     onClick = onDelete,
-                    modifier = Modifier.size(width = 64.dp, height = 34.dp)
+                    modifier = Modifier.size(width = 86.dp, height = 34.dp)
                 )
             }
         }
@@ -2750,8 +2838,9 @@ private fun EditableSegmentRow(
             modifier = Modifier.size(width = 44.dp, height = 30.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
-        PanelTextButton(
-            text = "X",
+        PanelIconButton(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Delete split",
             onClick = onDelete,
             enabled = canDelete,
             modifier = Modifier.size(width = 50.dp, height = 30.dp)
@@ -2838,6 +2927,55 @@ private fun PanelTextButton(
         FadingButtonText(
             text = text,
             color = if (enabled) PrimaryText else SecondaryText,
+            fontSize = 13.sp
+        )
+    }
+}
+
+@Composable
+private fun DangerPanelTextButton(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> RowBlack
+            isPressed -> BehindRed.copy(alpha = 0.22f)
+            else -> BehindRed.copy(alpha = 0.1f)
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "dangerPanelButtonBackground"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (enabled) BehindRed else DividerColor,
+        animationSpec = tween(ButtonFadeMillis),
+        label = "dangerPanelButtonBorder"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(width = 1.5.dp, color = borderColor)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        FadingButtonText(
+            text = text,
+            color = if (enabled) BehindRed else SecondaryText,
             fontSize = 13.sp
         )
     }

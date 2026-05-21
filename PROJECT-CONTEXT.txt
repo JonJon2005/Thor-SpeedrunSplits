@@ -87,14 +87,15 @@ Core Features
   - Updater row status/link text must always use the default system font and ignore the selected app font.
   - The panel uses the same dark/no-gradient visual style.
   - When open, the settings panel should dim the app behind it and take up the full screen.
-  - When open, the floating `SET` button should not overlap the panel; the panel should have an `X` close button in its top-right corner.
+  - When open, the floating `SET` button should not overlap the panel; the panel should have an Android close-icon button in its top-right corner.
   - Settings panel scrollable content should use the full panel width.
-  - Preset rows should not cut off names; use two-line rows with compact actions for `LOAD`, `EDIT`, `CLR PB`, and `DEL`.
+  - Preset rows should not cut off names; use two-line rows with compact actions for `LOAD`, `EDIT`, and `DELETE`.
   - Preset row action buttons must have enough vertical room to display labels fully.
-  - Each preset row in settings should include a compact clear-PB action that deletes that preset's saved personal best without deleting the preset.
+  - Preset list rows should not expose PB-clearing controls; PB clearing belongs in the Records tab to avoid accidental resets.
+  - Preset list `DELETE` actions must open a wide dimmed confirmation dialog before deleting; the prompt stays centered on one line, the action buttons each take half the dialog width, and the destructive confirm action is red.
   - Create preset and edit-selected-preset workflows should be visually separate and controlled by tabs so only one form is shown at a time.
   - Pressing `EDIT` on a custom preset should switch to the Edit tab and automatically scroll the settings panel to the edit form.
-  - Row editor controls should use arrows for move up/down and `X` for row deletion.
+  - Row editor controls should use Android icons for move up/down and close/remove actions, not text glyph substitutes.
   - Settings includes a Records tab for the currently loaded preset, showing saved PB split times and saved best-segment/gold times.
   - Records should show the loaded preset PB completion date/time in `mm/dd/yy 00:00am/pm` style when a PB exists.
   - Records controls should allow clearing the loaded preset's PB, clearing all saved gold/best segments, or clearing a specific saved gold/best segment row.
@@ -290,3 +291,9 @@ Change Log
 - 2026-05-21: Changed game title and category alignment from centered to left-aligned while preserving right-side title padding for the settings button.
 - 2026-05-21: Made custom preset `EDIT` automatically switch to the Edit tab and scroll the settings panel to the edit form.
 - 2026-05-21: Added bottom stats `Sum of Best` display above attempts when every split in the loaded preset has a saved best segment/gold.
+- 2026-05-21: Replaced remaining text `X` remove controls in preset editing and records rows with Android close icons.
+- 2026-05-21: Updated settings wording: create `+ ROW` to `ADD ROW`, `SAVE + LOAD` to `SAVE PRESET`, `RESET DEFAULT` to `RESET TO DEFAULT`; edit `+ ROW` to `ADD ROW`, `SAVE EDIT` to `SAVE CHANGES`; records `CLEAR GOLD` to `CLEAR GOLDS`.
+- 2026-05-21: Removed `CLR PB` buttons from preset list rows and changed preset row `DEL` to `DELETE`.
+- 2026-05-21: Added a dimmed confirmation dialog for preset list `DELETE`, with cancel and red confirm actions.
+- 2026-05-21: Widened the preset delete confirmation dialog and centered its prompt on one line.
+- 2026-05-21: Centered the preset delete confirmation buttons and made cancel/confirm each take half of the dialog width.
