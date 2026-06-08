@@ -6,6 +6,16 @@ The app is optimized for the Thor's 1080x1240 3.92 inch AMOLED bottom display, w
 
 If you would rather build the app yourself, instructions are below. If you just want to download and install, head to the releases page!
 
+You can add it to <b>Obtainium</b> here:
+
+<p align="center">
+  <a href="http://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/JonJon2005/Thor-SpeedrunSplits">
+    <img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" width="300" alt="Get it on Obtainium">
+  </a>
+</p>
+
+
+
 ## Features
 
 - LiveSplit-style split rows with split names, row colors, PB times, live deltas, and a large main timer.
