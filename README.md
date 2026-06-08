@@ -4,6 +4,8 @@ Thor Speedrun Splits is a LiveSplit-inspired Android split timer designed for th
 
 The app is optimized for the Thor's 1080x1240 3.92 inch AMOLED bottom display, with large touch targets, an OLED-friendly layout, fullscreen system UI hiding, and a row structure suited for quick speedrun glances.
 
+If you would rather build the app yourself, instructions are below. If you just want to download and install, head to the releases page!
+
 ## Features
 
 - LiveSplit-style split rows with split names, row colors, PB times, live deltas, and a large main timer.
@@ -26,16 +28,27 @@ The app is optimized for the Thor's 1080x1240 3.92 inch AMOLED bottom display, w
 
 ## Screenshots
 
+Settings and Records:
 <p>
-  <img src="docs/images/thor-speedrunsplits1.png" alt="Thor Speedrun Splits timer screen" width="420">
-  <img src="docs/images/thor-speedrunsplits2.png" alt="Thor Speedrun Splits running comparison" width="420">
-</p>
-<p>
-  <img src="docs/images/thor-speedrunsplits3.png" alt="Thor Speedrun Splits settings panel" width="420">
-  <img src="docs/images/thor-speedrunsplits4.png" alt="Thor Speedrun Splits records and themes" width="420">
+  <img src="docs/images/example-1.png" alt="Thor Speedrun Splits timer screen" width="420">
+  <img src="docs/images/example-2.png" alt="Thor Speedrun Splits settings page" width="420">
+  <img src="docs/images/example-6.png" alt="Thor Speedrun Splits viewing records" width="420">
 </p>
 
-## Requirements
+Managing Presets:
+<p>
+  <img src="docs/images/example-3.png" alt="Thor Speedrun Splits presets" width="420">
+  <img src="docs/images/example-4.png" alt="Thor Speedrun Splits creating a preset" width="420">
+  <img src="docs/images/example-5.png" alt="Thor Speedrun Splits editing a preset" width="420">
+</p>
+
+Themes:
+<p>
+  <img src="docs/images/example-7.png" alt="Thor Speedrun Splits OLED mode" width="420">
+  <img src="docs/images/example-8.png" alt="Thor Speedrun Splits Light mode" width="420">
+</p>
+
+## Requirements to build app yourself (this project is open-source)
 
 - Android Studio
 - JDK 11 or newer
