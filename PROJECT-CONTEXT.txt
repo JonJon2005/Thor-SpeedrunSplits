@@ -4,7 +4,7 @@ Thor Speedrun Splits - Project Context
 Purpose
 -------
 - Build an open-source Android app for Thor speedrun split tracking.
-- Current app state: Compose prototype with LiveSplit-like rows, manual split button, one-decimal timer, Room-backed split preset creation/loading, and Room-backed completed-run/PB comparison.
+- Current app state: Compose prototype with LiveSplit-like rows, manual split/undo controls, one-decimal timer, Room-backed split preset creation/loading, PB comparison, completed-run history/details, and JSON backup/restore.
 
 Workflow Rule
 -------------
@@ -75,6 +75,8 @@ Core Features
   - The `SPLIT` and `RESET` buttons should be square, slightly shorter than the previous rectangular controls, and placed side by side without overlapping the timer.
   - Square run-control labels must fit fully inside their buttons; use tighter padding and smaller type for `SPLIT`, `RESET`, and `DONE` as needed.
   - Pressing `RESET` during an active run resets the run and scrolls the split rows back to the top.
+  - While a run is active, a compact `UNDO` control is stacked with `RESET`; it is disabled until at least one split is complete.
+  - Pressing `UNDO` returns to the previous split without resetting the run clock, clears that split time/delta, and rolls back a gold/best-segment update created by the undone split.
   - After the run finishes, the button label changes to `DONE`; pressing it resets the timer, split index, and completed row times for testing.
   - Completed row times replace the sample target time and are shown in green.
   - Final timer turns green when the run is finished.
@@ -97,6 +99,15 @@ Core Features
   - Pressing `EDIT` on a custom preset should switch to the Edit tab and automatically scroll the settings panel to the edit form.
   - Row editor controls should use Android icons for move up/down and close/remove actions, not text glyph substitutes.
   - Settings includes a Records tab for the currently loaded preset, showing saved PB split times and saved best-segment/gold times.
+  - Settings includes a History tab for the currently loaded preset. It lists every completed run newest-first and opens a compact run-details view without leaving the settings panel.
+  - Run details preserve the game/category and split-name snapshot from completion, and show cumulative split time, segment duration, PB delta at the time of the run, gold markers, and largest segment gain/loss.
+  - Settings includes a Backup tab where users can include one or more presets, select all, or clear the selection before exporting.
+  - Starting a backup opens Android's system folder picker. The app writes one timestamped bundle named like `thor_speedrun_splits_backup_YYYYMMDD_HHMMSS.thorbackup.json` into the chosen folder.
+  - Backup bundles include each selected preset's name, game/category, ordered split names and marker colors, attempted/total-time stats, PB, best segments/golds, and completed-run history with its saved comparison/gold snapshots.
+  - Backup JSON uses format identifier `thor-speedrun-splits-backup` and schema version 1. It intentionally excludes Room primary keys so a future importer can validate the version and insert restored runs with new local IDs.
+  - Backup bundles record the active preset when it is included. The Backup tab can import `.thorbackup.json` through Android's system file picker; after import, the backed-up active preset becomes the loaded preset, or the first bundle preset is used for older bundles without that field.
+  - Import validates the format/schema, required fields, split ordering/counts, nonnegative and cumulative times, duplicate preset names, and a 25 MB size limit before beginning a Room transaction.
+  - Import is additive and repeat-safe: an identical same-name preset merges using the better PB, per-row fastest gold, larger stats snapshot, and deduplicated history. A same-name preset with a different definition receives an available `(Imported)` name instead of overwriting local data.
   - Records should show the loaded preset PB completion date/time in `mm/dd/yy 00:00am/pm` style when a PB exists.
   - Records controls should allow clearing the loaded preset's PB, clearing all saved gold/best segments, or clearing a specific saved gold/best segment row.
   - Settings includes a three-way theme toggle for Light, Dark, and OLED mode.
@@ -132,6 +143,7 @@ Core Features
   - Runs were temporarily/in-memory first; PBs now persist through Room so saved PBs survive closing/reopening the app.
   - A run is saved only when all splits are completed.
   - Current implementation stores the best completed run per preset as that preset's Room-backed personal best.
+  - Every completed run is also appended to Room-backed history independently of whether it becomes a PB; unfinished and reset runs are not added.
   - If a loaded preset has no saved run/PB, right-side split comparison times show `--`.
   - If a loaded preset has a saved run/PB, right-side split comparison times show that saved run's split times.
   - If a split row has no saved PB time, completing that split during the current run temporarily shows the current run's split time in that row; resetting an unfinished run returns it to `--`.
@@ -162,7 +174,7 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.4.2"` and `versionCode = 6`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.5"` and `versionCode = 7`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
@@ -173,6 +185,7 @@ Technical Notes
   - Use Room as the primary local persistence layer for app-owned custom split presets, selected/known presets, run attempts, PBs, and history because this is structured data.
   - Use DataStore only for small app preferences such as selected run profile, theme/display options, or last-opened game/category.
   - Use JSON files for preset import/export, backup/restore, or sharing split definitions; preset JSON should contain only split-definition data.
+  - Full backup bundles are distinct from definition-only preset sharing files: backups use the `.thorbackup.json` suffix and may contain PBs, golds, stats, and history.
   - Do not use plain text as the main storage format.
   - Keep app-owned data in internal app storage/database by default so it is private and reliable for core app behavior.
   - Keep preset definitions separate from personal bests/run history both in storage design and import/export file format.
@@ -182,6 +195,7 @@ Technical Notes
   - Each PB row stores preset name, split times in milliseconds, final time in milliseconds, and updated timestamp.
   - The app loads all stored PBs into UI state on startup, upserts a PB only when a completed run beats the existing PB, and deletes a PB when its custom preset is deleted or redefined with different structure.
   - Added `best_segments` table for per-preset best segment durations, with nullable/untimed entries stored using the same sentinel approach as migrated PB split rows.
+  - Added `completed_runs` and `completed_run_splits` tables for append-only completed-run history. Run rows snapshot game/category/final time/PB status, while split rows snapshot ordered names, split times, the PB comparison used during the run, and gold status.
   - Added `split_presets` and `split_preset_segments` tables for custom preset persistence.
   - The app loads custom presets from Room on startup, upserts custom presets when saved, and deletes preset rows/segments when a custom preset is deleted.
   - Added `attemptedRuns` and `totalTimeMillis` columns to `split_presets` with a Room migration from version 2 to 3.
@@ -298,3 +312,8 @@ Change Log
 - 2026-05-21: Widened the preset delete confirmation dialog and centered its prompt on one line.
 - 2026-05-21: Centered the preset delete confirmation buttons and made cancel/confirm each take half of the dialog width.
 - [APK] v0.4.2 released
+- 2026-08-13: Bumped app version metadata to v0.5/versionCode 7.
+- 2026-08-13: Added Room-backed completed-run history, a History tab with compact run details, and an in-run UNDO control that also rolls back gold updates from undone splits.
+- 2026-08-13: Added multi-preset backup selection and system-folder export using a versioned, import-ready `.thorbackup.json` bundle containing preset definitions, stats, PBs, golds, and completed-run history.
+- 2026-08-13: Added validated `.thorbackup.json` import with transactional preset/record restoration, safe same-name conflict handling, history deduplication, and automatic loading of the backed-up active preset.
+- [APK] v0.5 released

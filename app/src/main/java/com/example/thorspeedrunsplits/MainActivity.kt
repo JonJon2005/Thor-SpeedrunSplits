@@ -13,6 +13,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -84,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.room.withTransaction
 import com.example.thorspeedrunsplits.ui.theme.ThorSpeedrunSplitsTheme
 import java.util.Date
 import java.util.Locale
@@ -121,6 +124,24 @@ private data class Run(
     val completedAtMillis: Long
 )
 
+private data class HistoricalSplit(
+    val segmentName: String,
+    val splitTimeMillis: Long,
+    val comparisonSplitTimeMillis: Long?,
+    val wasGold: Boolean
+)
+
+private data class HistoricalRun(
+    val id: Long,
+    val presetName: String,
+    val gameTitle: String,
+    val category: String,
+    val splits: List<HistoricalSplit>,
+    val finalTimeMillis: Long,
+    val completedAtMillis: Long,
+    val wasPersonalBest: Boolean
+)
+
 private data class BestSegments(
     val presetName: String,
     val segmentTimes: List<Long?>
@@ -143,6 +164,44 @@ private sealed interface UpdateCheckState {
     data class UpdateAvailable(val latestVersion: String, val releaseUrl: String) : UpdateCheckState
     data object Failed : UpdateCheckState
 }
+
+private sealed interface BackupExportState {
+    data object Idle : BackupExportState
+    data object ChoosingFolder : BackupExportState
+    data object Exporting : BackupExportState
+    data object Canceled : BackupExportState
+    data class Success(val fileName: String, val presetCount: Int) : BackupExportState
+    data class Failed(val message: String) : BackupExportState
+}
+
+private sealed interface BackupImportState {
+    data object Idle : BackupImportState
+    data object ChoosingFile : BackupImportState
+    data object Importing : BackupImportState
+    data object Canceled : BackupImportState
+    data class Success(
+        val presetCount: Int,
+        val historyCount: Int,
+        val activePresetName: String
+    ) : BackupImportState
+    data class Failed(val message: String) : BackupImportState
+}
+
+private data class PreparedBackupPresetImport(
+    val sourcePresetName: String,
+    val preset: SplitPreset,
+    val stats: PresetStats,
+    val personalBest: Run?,
+    val bestSegments: BestSegments?,
+    val existingHistory: List<HistoricalRun>,
+    val historyToInsert: List<HistoricalRun>
+)
+
+private data class HistoricalRunImportKey(
+    val completedAtMillis: Long,
+    val finalTimeMillis: Long,
+    val splits: List<Pair<String, Long>>
+)
 
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
@@ -167,6 +226,288 @@ private fun PersonalBestRunEntity.toRun(): Run {
         splitTimes = splitTimesMillis.map { it.takeIf { splitTime -> splitTime >= 0L } },
         finalTime = finalTimeMillis,
         completedAtMillis = updatedAtMillis
+    )
+}
+
+private fun StoredCompletedRun.toHistoricalRun(): HistoricalRun {
+    return HistoricalRun(
+        id = run.id,
+        presetName = run.presetName,
+        gameTitle = run.gameTitle,
+        category = run.category,
+        splits = splits.sortedBy { it.position }.map { split ->
+            HistoricalSplit(
+                segmentName = split.segmentName,
+                splitTimeMillis = split.splitTimeMillis,
+                comparisonSplitTimeMillis = split.comparisonSplitTimeMillis,
+                wasGold = split.wasGold
+            )
+        },
+        finalTimeMillis = run.finalTimeMillis,
+        completedAtMillis = run.completedAtMillis,
+        wasPersonalBest = run.wasPersonalBest
+    )
+}
+
+private fun HistoricalRun.toCompletedRunEntity(): CompletedRunEntity {
+    return CompletedRunEntity(
+        id = id,
+        presetName = presetName,
+        gameTitle = gameTitle,
+        category = category,
+        finalTimeMillis = finalTimeMillis,
+        completedAtMillis = completedAtMillis,
+        wasPersonalBest = wasPersonalBest
+    )
+}
+
+private fun HistoricalRun.toCompletedRunSplitEntities(): List<CompletedRunSplitEntity> {
+    return splits.mapIndexed { index, split ->
+        CompletedRunSplitEntity(
+            runId = id,
+            position = index,
+            segmentName = split.segmentName,
+            splitTimeMillis = split.splitTimeMillis,
+            comparisonSplitTimeMillis = split.comparisonSplitTimeMillis,
+            wasGold = split.wasGold
+        )
+    }
+}
+
+private fun createBackupBundle(
+    selectedPresetNames: Set<String>,
+    activePresetName: String,
+    savedPresets: List<SplitPreset>,
+    savedRuns: Map<String, Run>,
+    savedBestSegments: Map<String, BestSegments>,
+    completedRunHistory: Map<String, List<HistoricalRun>>,
+    presetStats: Map<String, PresetStats>,
+    createdAtMillis: Long = System.currentTimeMillis()
+): BackupBundle {
+    val selectedPresets = savedPresets.filter { it.presetName in selectedPresetNames }
+    return BackupBundle(
+        createdAtMillis = createdAtMillis,
+        appVersion = BuildConfig.VERSION_NAME,
+        activePresetName = activePresetName.takeIf { it in selectedPresetNames }
+            ?: selectedPresets.firstOrNull()?.presetName,
+        presets = selectedPresets.map { preset ->
+            val stats = presetStats[preset.presetName] ?: PresetStats()
+            val personalBest = savedRuns[preset.presetName]?.let { run ->
+                BackupPersonalBest(
+                    splitTimesMillis = run.splitTimes,
+                    finalTimeMillis = run.finalTime,
+                    completedAtMillis = run.completedAtMillis
+                )
+            }
+            val bestSegmentTimes = List(preset.segments.size) { index ->
+                savedBestSegments[preset.presetName]?.segmentTimes?.getOrNull(index)
+            }
+            BackupPreset(
+                presetName = preset.presetName,
+                gameTitle = preset.gameTitle,
+                category = preset.category,
+                segments = preset.segments.map { segment ->
+                    BackupPresetSegment(
+                        name = segment.name,
+                        markerColorArgb = segment.markerColor.toArgb()
+                    )
+                },
+                attemptedRuns = stats.attemptedRuns,
+                totalTimeMillis = stats.totalTimeMillis,
+                personalBest = personalBest,
+                bestSegmentTimesMillis = bestSegmentTimes,
+                runHistory = completedRunHistory[preset.presetName].orEmpty().map { run ->
+                    BackupHistoricalRun(
+                        gameTitle = run.gameTitle,
+                        category = run.category,
+                        finalTimeMillis = run.finalTimeMillis,
+                        completedAtMillis = run.completedAtMillis,
+                        wasPersonalBest = run.wasPersonalBest,
+                        splits = run.splits.map { split ->
+                            BackupHistoricalSplit(
+                                segmentName = split.segmentName,
+                                splitTimeMillis = split.splitTimeMillis,
+                                comparisonSplitTimeMillis = split.comparisonSplitTimeMillis,
+                                wasGold = split.wasGold
+                            )
+                        }
+                    )
+                }
+            )
+        }
+    )
+}
+
+private fun prepareBackupImport(
+    bundle: BackupBundle,
+    savedPresets: List<SplitPreset>,
+    savedRuns: Map<String, Run>,
+    savedBestSegments: Map<String, BestSegments>,
+    completedRunHistory: Map<String, List<HistoricalRun>>,
+    presetStats: Map<String, PresetStats>
+): List<PreparedBackupPresetImport> {
+    val knownPresets = savedPresets.associateBy { it.presetName }.toMutableMap()
+    return bundle.presets.map { backupPreset ->
+        val sourcePreset = backupPreset.toSplitPreset()
+        val targetName = resolveImportedPresetName(sourcePreset, knownPresets)
+        val targetPreset = sourcePreset.copy(presetName = targetName)
+        knownPresets[targetName] = targetPreset
+
+        val existingStats = presetStats[targetName] ?: PresetStats()
+        val importedStats = PresetStats(
+            attemptedRuns = backupPreset.attemptedRuns,
+            totalTimeMillis = backupPreset.totalTimeMillis
+        )
+        val importedPersonalBest = backupPreset.personalBest?.toRun(targetName)
+        val mergedPersonalBest = betterPersonalBest(
+            first = savedRuns[targetName]?.takeIf {
+                it.splitTimes.size == targetPreset.segments.size
+            },
+            second = importedPersonalBest
+        )
+        val importedBestSegments = BestSegments(
+            presetName = targetName,
+            segmentTimes = backupPreset.bestSegmentTimesMillis
+        ).takeIf { bestSegments -> bestSegments.segmentTimes.any { it != null } }
+        val mergedBestSegments = mergeBestSegments(
+            presetName = targetName,
+            segmentCount = targetPreset.segments.size,
+            first = savedBestSegments[targetName]?.takeIf {
+                it.segmentTimes.size == targetPreset.segments.size
+            },
+            second = importedBestSegments
+        )
+        val existingHistory = completedRunHistory[targetName].orEmpty()
+        val existingHistoryKeys = existingHistory.mapTo(mutableSetOf()) { it.importKey() }
+        val importedHistory = backupPreset.runHistory.map { it.toHistoricalRun(targetName) }
+        val historyToInsert = importedHistory.filter { history ->
+            existingHistoryKeys.add(history.importKey())
+        }
+
+        PreparedBackupPresetImport(
+            sourcePresetName = backupPreset.presetName,
+            preset = targetPreset,
+            stats = PresetStats(
+                attemptedRuns = maxOf(existingStats.attemptedRuns, importedStats.attemptedRuns),
+                totalTimeMillis = maxOf(
+                    existingStats.totalTimeMillis,
+                    importedStats.totalTimeMillis
+                )
+            ),
+            personalBest = mergedPersonalBest,
+            bestSegments = mergedBestSegments,
+            existingHistory = existingHistory,
+            historyToInsert = historyToInsert
+        )
+    }
+}
+
+private fun BackupPreset.toSplitPreset(): SplitPreset {
+    return SplitPreset(
+        presetName = presetName,
+        gameTitle = gameTitle,
+        category = category,
+        segments = segments.map { segment ->
+            SplitSegment(
+                name = segment.name,
+                markerColor = Color(segment.markerColorArgb)
+            )
+        }
+    )
+}
+
+private fun resolveImportedPresetName(
+    importedPreset: SplitPreset,
+    knownPresets: Map<String, SplitPreset>
+): String {
+    val existingPreset = knownPresets[importedPreset.presetName]
+        ?: return importedPreset.presetName
+    if (existingPreset.hasSameDefinitionAs(importedPreset)) {
+        return importedPreset.presetName
+    }
+    var suffix = 1
+    while (true) {
+        val candidate = if (suffix == 1) {
+            "${importedPreset.presetName} (Imported)"
+        } else {
+            "${importedPreset.presetName} (Imported $suffix)"
+        }
+        val candidatePreset = knownPresets[candidate]
+        if (candidatePreset == null || candidatePreset.hasSameDefinitionAs(importedPreset)) {
+            return candidate
+        }
+        suffix += 1
+    }
+}
+
+private fun SplitPreset.hasSameDefinitionAs(other: SplitPreset): Boolean {
+    return gameTitle == other.gameTitle &&
+        category == other.category &&
+        segments == other.segments
+}
+
+private fun BackupPersonalBest.toRun(presetName: String): Run {
+    return Run(
+        presetName = presetName,
+        splitTimes = splitTimesMillis,
+        finalTime = finalTimeMillis,
+        completedAtMillis = completedAtMillis
+    )
+}
+
+private fun BackupHistoricalRun.toHistoricalRun(presetName: String): HistoricalRun {
+    return HistoricalRun(
+        id = 0L,
+        presetName = presetName,
+        gameTitle = gameTitle,
+        category = category,
+        splits = splits.map { split ->
+            HistoricalSplit(
+                segmentName = split.segmentName,
+                splitTimeMillis = split.splitTimeMillis,
+                comparisonSplitTimeMillis = split.comparisonSplitTimeMillis,
+                wasGold = split.wasGold
+            )
+        },
+        finalTimeMillis = finalTimeMillis,
+        completedAtMillis = completedAtMillis,
+        wasPersonalBest = wasPersonalBest
+    )
+}
+
+private fun betterPersonalBest(first: Run?, second: Run?): Run? {
+    if (first == null) return second
+    if (second == null) return first
+    val firstTimedSplitCount = first.splitTimes.count { it != null }
+    val secondTimedSplitCount = second.splitTimes.count { it != null }
+    return when {
+        secondTimedSplitCount > firstTimedSplitCount -> second
+        secondTimedSplitCount < firstTimedSplitCount -> first
+        second.finalTime < first.finalTime -> second
+        else -> first
+    }
+}
+
+private fun mergeBestSegments(
+    presetName: String,
+    segmentCount: Int,
+    first: BestSegments?,
+    second: BestSegments?
+): BestSegments? {
+    val mergedTimes = List(segmentCount) { index ->
+        listOfNotNull(
+            first?.segmentTimes?.getOrNull(index),
+            second?.segmentTimes?.getOrNull(index)
+        ).minOrNull()
+    }
+    return BestSegments(presetName, mergedTimes).takeIf { mergedTimes.any { it != null } }
+}
+
+private fun HistoricalRun.importKey(): HistoricalRunImportKey {
+    return HistoricalRunImportKey(
+        completedAtMillis = completedAtMillis,
+        finalTimeMillis = finalTimeMillis,
+        splits = splits.map { it.segmentName to it.splitTimeMillis }
     )
 }
 
@@ -530,6 +871,7 @@ private fun ThorSpeedrunSplitsApp() {
     }
     val personalBestRunDao = remember(database) { database.personalBestRunDao() }
     val bestSegmentsDao = remember(database) { database.bestSegmentsDao() }
+    val completedRunDao = remember(database) { database.completedRunDao() }
     val splitPresetDao = remember(database) { database.splitPresetDao() }
     val appPreferenceDao = remember(database) { database.appPreferenceDao() }
     val coroutineScope = rememberCoroutineScope()
@@ -551,6 +893,7 @@ private fun ThorSpeedrunSplitsApp() {
     }
     val savedRuns = remember { mutableStateMapOf<String, Run>() }
     val savedBestSegments = remember { mutableStateMapOf<String, BestSegments>() }
+    val completedRunHistory = remember { mutableStateMapOf<String, List<HistoricalRun>>() }
     val presetStats = remember { mutableStateMapOf<String, PresetStats>() }
     var draftPresetName by remember { mutableStateOf("New Preset") }
     var draftGameTitle by remember { mutableStateOf(DefaultPreset.gameTitle) }
@@ -585,6 +928,41 @@ private fun ThorSpeedrunSplitsApp() {
         }
     }
     val goldSplitIndices = remember { mutableStateListOf<Int>() }
+    val bestSegmentRollbackValues = remember { mutableStateMapOf<Int, Long>() }
+    var backupExportState by remember { mutableStateOf<BackupExportState>(BackupExportState.Idle) }
+    var backupImportState by remember { mutableStateOf<BackupImportState>(BackupImportState.Idle) }
+    var pendingBackupBundle by remember { mutableStateOf<BackupBundle?>(null) }
+    val backupFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { selectedFolderUri ->
+        val bundle = pendingBackupBundle
+        if (selectedFolderUri == null || bundle == null) {
+            backupExportState = BackupExportState.Canceled
+            pendingBackupBundle = null
+        } else {
+            backupExportState = BackupExportState.Exporting
+            coroutineScope.launch {
+                backupExportState = try {
+                    val fileName = withContext(Dispatchers.IO) {
+                        writeBackupBundleToTree(
+                            context = appContext,
+                            treeUri = selectedFolderUri,
+                            bundle = bundle
+                        )
+                    }
+                    BackupExportState.Success(
+                        fileName = fileName,
+                        presetCount = bundle.presets.size
+                    )
+                } catch (exception: Exception) {
+                    BackupExportState.Failed(
+                        message = exception.message ?: "The backup could not be written."
+                    )
+                }
+                pendingBackupBundle = null
+            }
+        }
+    }
 
     fun resetRun(segmentCount: Int) {
         isRunning = false
@@ -598,6 +976,7 @@ private fun ThorSpeedrunSplitsApp() {
         completedTimes.clear()
         repeat(segmentCount) { completedTimes.add(null) }
         goldSplitIndices.clear()
+        bestSegmentRollbackValues.clear()
         resetScrollRequest += 1
     }
 
@@ -632,8 +1011,10 @@ private fun ThorSpeedrunSplitsApp() {
             coroutineScope.launch {
                 personalBestRunDao.deleteByPresetName(preset.presetName)
                 bestSegmentsDao.deleteByPresetName(preset.presetName)
+                completedRunDao.deleteByPresetName(preset.presetName)
                 splitPresetDao.deleteByPresetName(preset.presetName)
             }
+            completedRunHistory.remove(preset.presetName)
             if (editTargetPresetName == preset.presetName) {
                 editTargetPresetName = null
                 editSegments.clear()
@@ -686,7 +1067,107 @@ private fun ThorSpeedrunSplitsApp() {
         }
     }
 
-    LaunchedEffect(personalBestRunDao, bestSegmentsDao, splitPresetDao, appPreferenceDao) {
+    val backupFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { selectedBackupUri ->
+        if (selectedBackupUri == null) {
+            backupImportState = BackupImportState.Canceled
+        } else {
+            backupImportState = BackupImportState.Importing
+            coroutineScope.launch {
+                try {
+                    val bundle = withContext(Dispatchers.IO) {
+                        readBackupBundleFromDocument(appContext, selectedBackupUri)
+                    }
+                    val preparedImports = prepareBackupImport(
+                        bundle = bundle,
+                        savedPresets = savedPresets,
+                        savedRuns = savedRuns,
+                        savedBestSegments = savedBestSegments,
+                        completedRunHistory = completedRunHistory,
+                        presetStats = presetStats
+                    )
+                    val importedActivePreset = preparedImports.firstOrNull { preparedImport ->
+                        preparedImport.sourcePresetName == bundle.activePresetName
+                    }?.preset ?: preparedImports.first().preset
+                    val insertedHistoryByPreset = mutableMapOf<String, List<HistoricalRun>>()
+                    database.withTransaction {
+                        preparedImports.forEach { preparedImport ->
+                            val preset = preparedImport.preset
+                            splitPresetDao.upsertWithSegments(
+                                preset = preset.toSplitPresetEntity(preparedImport.stats),
+                                segments = preset.toSplitPresetSegmentEntities()
+                            )
+                            preparedImport.personalBest?.let { personalBest ->
+                                personalBestRunDao.upsert(personalBest.toPersonalBestRunEntity())
+                            }
+                            preparedImport.bestSegments?.let { bestSegments ->
+                                bestSegmentsDao.upsert(bestSegments.toBestSegmentsEntity())
+                            }
+                            insertedHistoryByPreset[preset.presetName] =
+                                preparedImport.historyToInsert.map { historicalRun ->
+                                    val runId = completedRunDao.insertWithSplits(
+                                        run = historicalRun.toCompletedRunEntity(),
+                                        splits = historicalRun.toCompletedRunSplitEntities()
+                                    )
+                                    historicalRun.copy(id = runId)
+                                }
+                        }
+                        appPreferenceDao.upsert(
+                            AppPreferenceEntity(
+                                key = LoadedPresetPreferenceKey,
+                                value = importedActivePreset.presetName
+                            )
+                        )
+                    }
+
+                    preparedImports.forEach { preparedImport ->
+                        val preset = preparedImport.preset
+                        val existingIndex = savedPresets.indexOfFirst {
+                            it.presetName == preset.presetName
+                        }
+                        if (existingIndex >= 0) {
+                            savedPresets[existingIndex] = preset
+                        } else {
+                            savedPresets.add(preset)
+                        }
+                        presetStats[preset.presetName] = preparedImport.stats
+                        preparedImport.personalBest?.let {
+                            savedRuns[preset.presetName] = it
+                        }
+                        preparedImport.bestSegments?.let {
+                            savedBestSegments[preset.presetName] = it
+                        }
+                        completedRunHistory[preset.presetName] = (
+                            preparedImport.existingHistory +
+                                insertedHistoryByPreset[preset.presetName].orEmpty()
+                            ).sortedByDescending { it.completedAtMillis }
+                    }
+
+                    activePreset = importedActivePreset
+                    resetRun(importedActivePreset.segments.size)
+                    isSettingsOpen = false
+                    backupImportState = BackupImportState.Success(
+                        presetCount = preparedImports.size,
+                        historyCount = insertedHistoryByPreset.values.sumOf { it.size },
+                        activePresetName = importedActivePreset.presetName
+                    )
+                } catch (exception: Exception) {
+                    backupImportState = BackupImportState.Failed(
+                        message = exception.message ?: "The backup could not be imported."
+                    )
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(
+        personalBestRunDao,
+        bestSegmentsDao,
+        completedRunDao,
+        splitPresetDao,
+        appPreferenceDao
+    ) {
         checkForAppUpdate()
 
         splitPresetDao.ensurePresetExists(
@@ -703,6 +1184,16 @@ private fun ThorSpeedrunSplitsApp() {
         bestSegmentsDao.getAll().forEach { savedBestSegment ->
             savedBestSegments[savedBestSegment.presetName] = savedBestSegment.toBestSegments()
         }
+
+        completedRunHistory.clear()
+        completedRunDao.getAllWithSplits()
+            .map { it.toHistoricalRun() }
+            .groupBy { it.presetName }
+            .forEach { (presetName, runs) ->
+                completedRunHistory[presetName] = runs.sortedByDescending {
+                    it.completedAtMillis
+                }
+            }
 
         val storedPresetRows = splitPresetDao.getAllWithSegments()
         presetStats.clear()
@@ -844,7 +1335,7 @@ private fun ThorSpeedrunSplitsApp() {
             val titleSize = if (isWideThorShape) 22.sp else 24.sp
             val rowTextSize = if (isWideThorShape) 18.sp else 20.sp
             val timerSize = if (isWideThorShape) 54.sp else 62.sp
-            val bottomButtonSide = if (isWideThorShape) 100.dp else 112.dp
+            val bottomButtonSide = if (isWideThorShape) 104.dp else 112.dp
             val splitButtonSize = ButtonSize(
                 width = bottomButtonSide,
                 height = bottomButtonSide
@@ -887,6 +1378,8 @@ private fun ThorSpeedrunSplitsApp() {
                     buttonSize = splitButtonSize,
                     resetButtonSize = resetButtonSize,
                     showResetButton = isRunning,
+                    showUndoButton = isRunning,
+                    undoButtonEnabled = isRunning && activeSplitIndex > 0,
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
@@ -936,6 +1429,8 @@ private fun ThorSpeedrunSplitsApp() {
                             ?.segmentTimes
                             ?.getOrNull(activeSplitIndex)
                         if (currentSegmentBest == null || segmentElapsed < currentSegmentBest) {
+                            bestSegmentRollbackValues[activeSplitIndex] =
+                                currentSegmentBest ?: UntimedSplitSentinel
                             val updatedSegmentTimes = MutableList(activePreset.segments.size) { index ->
                                 activeBestSegments?.segmentTimes?.getOrNull(index)
                             }
@@ -984,12 +1479,46 @@ private fun ThorSpeedrunSplitsApp() {
                                 completedAtMillis = System.currentTimeMillis()
                             )
                             val currentBest = savedRuns[activePreset.presetName]
-                            if (
+                            val isNewPersonalBest =
                                 currentBest == null ||
                                 currentBest.splitTimes.size != completedRun.splitTimes.size ||
                                 currentBest.splitTimes.any { it == null } ||
                                 completedRun.finalTime < currentBest.finalTime
-                            ) {
+                            val historicalRun = HistoricalRun(
+                                id = 0L,
+                                presetName = activePreset.presetName,
+                                gameTitle = activePreset.gameTitle,
+                                category = activePreset.category,
+                                splits = activePreset.segments.mapIndexed { index, segment ->
+                                    HistoricalSplit(
+                                        segmentName = segment.name,
+                                        splitTimeMillis = completedRun.splitTimes[index]
+                                            ?: splitElapsed,
+                                        comparisonSplitTimeMillis = runComparison
+                                            ?.splitTimes
+                                            ?.getOrNull(index),
+                                        wasGold = index in goldSplitIndices
+                                    )
+                                },
+                                finalTimeMillis = splitElapsed,
+                                completedAtMillis = completedRun.completedAtMillis,
+                                wasPersonalBest = isNewPersonalBest
+                            )
+                            val completedPresetName = historicalRun.presetName
+                            coroutineScope.launch {
+                                val historyId = completedRunDao.insertWithSplits(
+                                    run = historicalRun.toCompletedRunEntity(),
+                                    splits = historicalRun.toCompletedRunSplitEntities()
+                                )
+                                val persistedHistoricalRun = historicalRun.copy(id = historyId)
+                                val currentHistory = completedRunHistory[
+                                    completedPresetName
+                                ].orEmpty()
+                                completedRunHistory[completedPresetName] =
+                                    (listOf(persistedHistoricalRun) + currentHistory)
+                                        .sortedByDescending { it.completedAtMillis }
+                            }
+                            if (isNewPersonalBest) {
                                 savedRuns[activePreset.presetName] = completedRun
                                 coroutineScope.launch {
                                     personalBestRunDao.upsert(completedRun.toPersonalBestRunEntity())
@@ -1017,6 +1546,48 @@ private fun ThorSpeedrunSplitsApp() {
                             }
                         }
                         resetRun(activePreset.segments.size)
+                    },
+                    onUndo = {
+                        if (isRunning && activeSplitIndex > 0) {
+                            val undoneSplitIndex = activeSplitIndex - 1
+                            completedTimes[undoneSplitIndex] = null
+                            if (undoneSplitIndex in goldSplitIndices) {
+                                goldSplitIndices.remove(undoneSplitIndex)
+                                val previousBestSegment = bestSegmentRollbackValues
+                                    .remove(undoneSplitIndex)
+                                if (previousBestSegment != null) {
+                                    val presetName = activePreset.presetName
+                                    val restoredSegmentTimes = MutableList(
+                                        activePreset.segments.size
+                                    ) { index ->
+                                        savedBestSegments[presetName]
+                                            ?.segmentTimes
+                                            ?.getOrNull(index)
+                                    }
+                                    restoredSegmentTimes[undoneSplitIndex] =
+                                        previousBestSegment.takeIf { it >= 0L }
+                                    if (restoredSegmentTimes.any { it != null }) {
+                                        val restoredBestSegments = BestSegments(
+                                            presetName = presetName,
+                                            segmentTimes = restoredSegmentTimes
+                                        )
+                                        savedBestSegments[presetName] = restoredBestSegments
+                                        coroutineScope.launch {
+                                            bestSegmentsDao.upsert(
+                                                restoredBestSegments.toBestSegmentsEntity()
+                                            )
+                                        }
+                                    } else {
+                                        savedBestSegments.remove(presetName)
+                                        coroutineScope.launch {
+                                            bestSegmentsDao.deleteByPresetName(presetName)
+                                        }
+                                    }
+                                }
+                            }
+                            activeSplitIndex = undoneSplitIndex
+                            nowMillis = SystemClock.elapsedRealtime()
+                        }
                     }
                 )
             }
@@ -1057,6 +1628,9 @@ private fun ThorSpeedrunSplitsApp() {
                     activePreset = activePreset,
                     activePersonalBest = savedRuns[activePreset.presetName],
                     activeBestSegments = savedBestSegments[activePreset.presetName],
+                    activeRunHistory = completedRunHistory[activePreset.presetName].orEmpty(),
+                    backupExportState = backupExportState,
+                    backupImportState = backupImportState,
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
@@ -1102,6 +1676,34 @@ private fun ThorSpeedrunSplitsApp() {
                                 )
                             )
                         }
+                    },
+                    onRequestBackup = { selectedPresetNames ->
+                        backupImportState = BackupImportState.Idle
+                        val backupBundle = createBackupBundle(
+                            selectedPresetNames = selectedPresetNames,
+                            activePresetName = activePreset.presetName,
+                            savedPresets = savedPresets,
+                            savedRuns = savedRuns,
+                            savedBestSegments = savedBestSegments,
+                            completedRunHistory = completedRunHistory,
+                            presetStats = presetStats
+                        )
+                        if (backupBundle.presets.isNotEmpty()) {
+                            pendingBackupBundle = backupBundle
+                            backupExportState = BackupExportState.ChoosingFolder
+                            backupFolderLauncher.launch(null)
+                        }
+                    },
+                    onRequestBackupImport = {
+                        backupExportState = BackupExportState.Idle
+                        backupImportState = BackupImportState.ChoosingFile
+                        backupFileLauncher.launch(
+                            arrayOf(
+                                "application/json",
+                                "application/octet-stream",
+                                "text/plain"
+                            )
+                        )
                     },
                     selectedTab = presetSettingsTab,
                     editPresetScrollRequest = editPresetScrollRequest,
@@ -1455,7 +2057,9 @@ private data class ButtonSize(
 private enum class PresetSettingsTab {
     Create,
     Edit,
-    Records
+    Records,
+    History,
+    Backup
 }
 
 @Composable
@@ -1760,6 +2364,8 @@ private fun BottomControls(
     buttonSize: ButtonSize,
     resetButtonSize: ButtonSize,
     showResetButton: Boolean,
+    showUndoButton: Boolean,
+    undoButtonEnabled: Boolean,
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
@@ -1768,6 +2374,7 @@ private fun BottomControls(
     timerSize: TextUnit,
     onSplit: () -> Unit,
     onReset: () -> Unit,
+    onUndo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -1782,7 +2389,7 @@ private fun BottomControls(
             modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
         )
         AnimatedVisibility(
-            visible = showResetButton,
+            visible = showResetButton || showUndoButton,
             enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
                 scaleIn(
                     animationSpec = tween(ButtonFadeMillis),
@@ -1796,16 +2403,43 @@ private fun BottomControls(
         ) {
             Row {
                 Spacer(modifier = Modifier.width(12.dp))
-                SplitButton(
-                    enabled = true,
-                    text = "RESET",
-                    onSplit = onReset,
-                    fontSize = 20.sp,
-                    modifier = Modifier.size(
-                        width = resetButtonSize.width,
-                        height = resetButtonSize.height
+                if (showUndoButton) {
+                    val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
+                    Column {
+                        SplitButton(
+                            enabled = undoButtonEnabled,
+                            text = "UNDO",
+                            onSplit = onUndo,
+                            fontSize = 16.sp,
+                            modifier = Modifier.size(
+                                width = resetButtonSize.width,
+                                height = secondaryButtonHeight
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SplitButton(
+                            enabled = showResetButton,
+                            text = "RESET",
+                            onSplit = onReset,
+                            fontSize = 16.sp,
+                            modifier = Modifier.size(
+                                width = resetButtonSize.width,
+                                height = secondaryButtonHeight
+                            )
+                        )
+                    }
+                } else {
+                    SplitButton(
+                        enabled = showResetButton,
+                        text = "RESET",
+                        onSplit = onReset,
+                        fontSize = 20.sp,
+                        modifier = Modifier.size(
+                            width = resetButtonSize.width,
+                            height = resetButtonSize.height
+                        )
                     )
-                )
+                }
             }
         }
         Spacer(modifier = Modifier.weight(1f))
@@ -1936,6 +2570,9 @@ private fun SettingsPanel(
     activePreset: SplitPreset,
     activePersonalBest: Run?,
     activeBestSegments: BestSegments?,
+    activeRunHistory: List<HistoricalRun>,
+    backupExportState: BackupExportState,
+    backupImportState: BackupImportState,
     selectedThemeMode: AppThemeMode,
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
@@ -1945,6 +2582,8 @@ private fun SettingsPanel(
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
+    onRequestBackup: (Set<String>) -> Unit,
+    onRequestBackupImport: () -> Unit,
     selectedTab: PresetSettingsTab,
     editPresetScrollRequest: Int,
     onSelectedTabChange: (PresetSettingsTab) -> Unit,
@@ -1985,11 +2624,30 @@ private fun SettingsPanel(
     modifier: Modifier = Modifier
 ) {
     val settingsListState = rememberLazyListState()
+    var selectedHistoricalRunId by remember(activePreset.presetName) {
+        mutableStateOf<Long?>(null)
+    }
+    val availableBackupPresetNames = savedPresets.map { it.presetName }
+    var selectedBackupPresetNames by remember {
+        mutableStateOf(setOf(activePreset.presetName))
+    }
 
     LaunchedEffect(editPresetScrollRequest, selectedTab) {
         if (editPresetScrollRequest > 0 && selectedTab == PresetSettingsTab.Edit) {
             settingsListState.animateScrollToItem(1)
         }
+    }
+
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != PresetSettingsTab.History) {
+            selectedHistoricalRunId = null
+        }
+    }
+
+    LaunchedEffect(availableBackupPresetNames) {
+        selectedBackupPresetNames = selectedBackupPresetNames
+            .intersect(availableBackupPresetNames.toSet())
+            .ifEmpty { setOf(activePreset.presetName) }
     }
 
     Column(
@@ -2201,7 +2859,7 @@ private fun SettingsPanel(
                         Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
-            } else {
+            } else if (selectedTab == PresetSettingsTab.Records) {
                 item {
                     RecordsPanel(
                         preset = activePreset,
@@ -2211,6 +2869,130 @@ private fun SettingsPanel(
                         onClearBestSegment = { index -> onClearBestSegment(activePreset, index) },
                         onClearBestSegments = { onClearBestSegments(activePreset) }
                     )
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
+            } else if (selectedTab == PresetSettingsTab.History) {
+                val selectedHistoricalRun = activeRunHistory.firstOrNull {
+                    it.id == selectedHistoricalRunId
+                }
+                if (selectedHistoricalRun == null) {
+                    item {
+                        HistoryHeader(
+                            preset = activePreset,
+                            completedRunCount = activeRunHistory.size
+                        )
+                    }
+                    itemsIndexed(
+                        items = activeRunHistory,
+                        key = { _, run -> "history-${run.id}" }
+                    ) { _, run ->
+                        HistoricalRunRow(
+                            run = run,
+                            onOpenDetails = { selectedHistoricalRunId = run.id }
+                        )
+                    }
+                    if (activeRunHistory.isEmpty()) {
+                        item {
+                            Text(
+                                text = "Completed runs will appear here.",
+                                color = SecondaryText,
+                                fontSize = 15.sp,
+                                lineHeight = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(22.dp))
+                        }
+                    }
+                } else {
+                    item {
+                        HistoricalRunDetailsHeader(
+                            run = selectedHistoricalRun,
+                            onBack = { selectedHistoricalRunId = null }
+                        )
+                        HistoricalRunDetailsColumnHeader()
+                    }
+                    itemsIndexed(
+                        items = selectedHistoricalRun.splits,
+                        key = { index, _ -> "history-detail-${selectedHistoricalRun.id}-$index" }
+                    ) { index, split ->
+                        HistoricalRunSplitRow(
+                            run = selectedHistoricalRun,
+                            index = index,
+                            split = split
+                        )
+                    }
+                    item { Spacer(modifier = Modifier.height(22.dp)) }
+                }
+            } else {
+                item {
+                    BackupHeader(
+                        selectedPresetCount = selectedBackupPresetNames.size,
+                        backupExportState = backupExportState,
+                        backupImportState = backupImportState
+                    )
+                }
+                itemsIndexed(
+                    items = savedPresets,
+                    key = { _, preset -> "backup-${preset.presetName}" }
+                ) { _, preset ->
+                    val isSelected = preset.presetName in selectedBackupPresetNames
+                    BackupPresetSelectionRow(
+                        preset = preset,
+                        selected = isSelected,
+                        enabled = backupExportState !is BackupExportState.Exporting &&
+                            backupImportState !is BackupImportState.Importing,
+                        onToggle = {
+                            selectedBackupPresetNames = if (isSelected) {
+                                selectedBackupPresetNames - preset.presetName
+                            } else {
+                                selectedBackupPresetNames + preset.presetName
+                            }
+                        }
+                    )
+                }
+                item {
+                    val isBusy = backupExportState is BackupExportState.Exporting ||
+                        backupImportState is BackupImportState.Importing
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        PanelTextButton(
+                            text = "SELECT ALL",
+                            onClick = {
+                                selectedBackupPresetNames = availableBackupPresetNames.toSet()
+                            },
+                            enabled = !isBusy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        PanelTextButton(
+                            text = "CLEAR",
+                            onClick = { selectedBackupPresetNames = emptySet() },
+                            enabled = !isBusy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        PanelTextButton(
+                            text = "BACKUP",
+                            onClick = { onRequestBackup(selectedBackupPresetNames) },
+                            enabled = selectedBackupPresetNames.isNotEmpty() && !isBusy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        PanelTextButton(
+                            text = "IMPORT",
+                            onClick = onRequestBackupImport,
+                            enabled = !isBusy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.height(22.dp))
                 }
             }
@@ -2402,6 +3184,422 @@ private fun RecordSplitRow(
 }
 
 @Composable
+private fun HistoryHeader(
+    preset: SplitPreset,
+    completedRunCount: Int
+) {
+    SettingsSectionTitle("Run History")
+    Text(
+        text = "${preset.gameTitle} - ${preset.category}",
+        color = SuccessGreen,
+        fontSize = 18.sp,
+        lineHeight = 18.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "$completedRunCount completed ${if (completedRunCount == 1) "run" else "runs"}",
+        color = SecondaryText,
+        fontSize = 13.sp,
+        lineHeight = 13.sp,
+        maxLines = 1
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+}
+
+@Composable
+private fun HistoricalRunRow(
+    run: HistoricalRun,
+    onOpenDetails: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = formatDateTime(run.completedAtMillis),
+                color = PrimaryText,
+                fontSize = 14.sp,
+                lineHeight = 14.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.height(5.dp))
+            Text(
+                text = "${run.splits.size} splits",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1
+            )
+        }
+        if (run.wasPersonalBest) {
+            Text(
+                text = "NEW PB",
+                color = SuccessGreen,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(58.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(
+            text = formatSeconds(run.finalTimeMillis),
+            color = PrimaryText,
+            fontSize = 15.sp,
+            lineHeight = 15.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(74.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = "DETAILS",
+            onClick = onOpenDetails,
+            modifier = Modifier.size(width = 78.dp, height = 36.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+}
+
+@Composable
+private fun HistoricalRunDetailsHeader(
+    run: HistoricalRun,
+    onBack: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        PanelTextButton(
+            text = "BACK",
+            onClick = onBack,
+            modifier = Modifier.size(width = 72.dp, height = 38.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Run Details",
+                color = PrimaryText,
+                fontSize = 18.sp,
+                lineHeight = 18.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = formatDateTime(run.completedAtMillis),
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1
+            )
+        }
+        if (run.wasPersonalBest) {
+            Text(
+                text = "NEW PB",
+                color = SuccessGreen,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+        }
+        Text(
+            text = formatSeconds(run.finalTimeMillis),
+            color = PrimaryText,
+            fontSize = 20.sp,
+            lineHeight = 20.sp,
+            maxLines = 1
+        )
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "${run.gameTitle} - ${run.category}",
+        color = SuccessGreen,
+        fontSize = 15.sp,
+        lineHeight = 15.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(5.dp))
+    val segmentDeltas = run.splits.indices.mapNotNull { index ->
+        historicalSegmentDeltaMillis(run, index)?.let { delta -> index to delta }
+    }
+    val largestGain = segmentDeltas.minByOrNull { it.second }?.takeIf { it.second < 0L }
+    val largestLoss = segmentDeltas.maxByOrNull { it.second }?.takeIf { it.second > 0L }
+    val summaryParts = buildList {
+        largestGain?.let { (index, delta) ->
+            add("Gain ${run.splits[index].segmentName} ${formatDeltaSeconds(delta)}")
+        }
+        largestLoss?.let { (index, delta) ->
+            add("Loss ${run.splits[index].segmentName} ${formatDeltaSeconds(delta)}")
+        }
+    }
+    Text(
+        text = if (summaryParts.isEmpty()) {
+            "No previous PB comparison"
+        } else {
+            summaryParts.joinToString("  |  ")
+        },
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 12.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+}
+
+@Composable
+private fun HistoricalRunDetailsColumnHeader() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(30.dp)
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 10.dp)
+    ) {
+        HistoricalDetailHeaderText("Split", Modifier.weight(1f), TextAlign.Start)
+        HistoricalDetailHeaderText("TIME", Modifier.width(70.dp), TextAlign.End)
+        HistoricalDetailHeaderText("SEG", Modifier.width(68.dp), TextAlign.End)
+        HistoricalDetailHeaderText("PB Δ", Modifier.width(64.dp), TextAlign.End)
+    }
+}
+
+@Composable
+private fun HistoricalDetailHeaderText(
+    text: String,
+    modifier: Modifier,
+    textAlign: TextAlign
+) {
+    Text(
+        text = text,
+        color = SecondaryText,
+        fontSize = 11.sp,
+        lineHeight = 11.sp,
+        maxLines = 1,
+        textAlign = textAlign,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun HistoricalRunSplitRow(
+    run: HistoricalRun,
+    index: Int,
+    split: HistoricalSplit
+) {
+    val segmentDuration = historicalSegmentDurationMillis(run, index)
+    val splitDelta = split.comparisonSplitTimeMillis?.let {
+        split.splitTimeMillis - it
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(5.dp)
+                .fillMaxHeight(0.58f)
+                .background(if (split.wasGold) GoldSplit else DividerColor)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "${index + 1}. ${split.segmentName}",
+            color = PrimaryText,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = formatSeconds(split.splitTimeMillis),
+            color = PrimaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(70.dp)
+        )
+        Text(
+            text = formatSeconds(segmentDuration),
+            color = if (split.wasGold) GoldSplit else PrimaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(68.dp)
+        )
+        Text(
+            text = splitDelta?.let(::formatDeltaSeconds) ?: "--",
+            color = when {
+                splitDelta == null -> SecondaryText
+                splitDelta <= 0L -> SuccessGreen
+                else -> BehindRed
+            },
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(64.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+}
+
+private fun historicalSegmentDurationMillis(run: HistoricalRun, index: Int): Long {
+    val previousSplitTime = run.splits.getOrNull(index - 1)?.splitTimeMillis ?: 0L
+    return (run.splits[index].splitTimeMillis - previousSplitTime).coerceAtLeast(0L)
+}
+
+private fun historicalSegmentDeltaMillis(run: HistoricalRun, index: Int): Long? {
+    val currentSegmentDuration = historicalSegmentDurationMillis(run, index)
+    val comparisonSplitTime = run.splits[index].comparisonSplitTimeMillis ?: return null
+    val previousComparisonSplitTime = run.splits
+        .getOrNull(index - 1)
+        ?.comparisonSplitTimeMillis
+        ?: 0L
+    return currentSegmentDuration - (comparisonSplitTime - previousComparisonSplitTime)
+}
+
+@Composable
+private fun BackupHeader(
+    selectedPresetCount: Int,
+    backupExportState: BackupExportState,
+    backupImportState: BackupImportState
+) {
+    SettingsSectionTitle("Backup / Import")
+    Text(
+        text = "Back up or restore presets",
+        color = PrimaryText,
+        fontSize = 18.sp,
+        lineHeight = 18.sp,
+        maxLines = 1
+    )
+    Spacer(modifier = Modifier.height(5.dp))
+    Text(
+        text = "Includes layout, PB, golds, stats, and completed-run history.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 12.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(5.dp))
+    val statusText = when (backupImportState) {
+        BackupImportState.Idle -> when (backupExportState) {
+            BackupExportState.Idle -> {
+                "$selectedPresetCount selected | Backup format v$BackupSchemaVersion"
+            }
+            BackupExportState.ChoosingFolder -> "Choose a destination folder..."
+            BackupExportState.Exporting -> "Writing backup..."
+            BackupExportState.Canceled -> "Backup canceled | $selectedPresetCount selected"
+            is BackupExportState.Success -> {
+                "Saved ${backupExportState.presetCount} preset(s) | ${backupExportState.fileName}"
+            }
+            is BackupExportState.Failed -> "Backup failed | ${backupExportState.message}"
+        }
+        BackupImportState.ChoosingFile -> "Choose a .thorbackup.json file..."
+        BackupImportState.Importing -> "Validating and importing backup..."
+        BackupImportState.Canceled -> "Import canceled"
+        is BackupImportState.Success -> {
+            "Imported ${backupImportState.presetCount} preset(s), " +
+                "${backupImportState.historyCount} new run(s) | " +
+                "Loaded ${backupImportState.activePresetName}"
+        }
+        is BackupImportState.Failed -> "Import failed | ${backupImportState.message}"
+    }
+    Text(
+        text = statusText,
+        color = when {
+            backupImportState is BackupImportState.Success -> SuccessGreen
+            backupImportState is BackupImportState.Failed -> BehindRed
+            backupImportState !is BackupImportState.Idle -> SecondaryText
+            backupExportState is BackupExportState.Success -> SuccessGreen
+            backupExportState is BackupExportState.Failed -> BehindRed
+            else -> SecondaryText
+        },
+        fontSize = 12.sp,
+        lineHeight = 12.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+}
+
+@Composable
+private fun BackupPresetSelectionRow(
+    preset: SplitPreset,
+    selected: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .background(if (selected) SuccessGreen.copy(alpha = 0.08f) else RowBlack)
+            .border(
+                width = if (selected) 1.dp else 0.5.dp,
+                color = if (selected) SuccessGreen else DividerColor
+            )
+            .padding(horizontal = 10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(6.dp)
+                .fillMaxHeight(0.62f)
+                .background(preset.segments.firstOrNull()?.markerColor ?: SecondaryText)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = preset.presetName,
+                color = if (selected) SuccessGreen else PrimaryText,
+                fontSize = 14.sp,
+                lineHeight = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "${preset.gameTitle} - ${preset.category} | ${preset.segments.size} splits",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = if (selected) "INCLUDED" else "ADD",
+            onClick = onToggle,
+            enabled = enabled,
+            modifier = Modifier.size(width = 84.dp, height = 36.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
+}
+
+@Composable
 private fun SettingsModeTabs(
     selectedTab: PresetSettingsTab,
     onSelectedTabChange: (PresetSettingsTab) -> Unit
@@ -2415,16 +3613,18 @@ private fun SettingsModeTabs(
             .padding(4.dp)
     ) {
         SettingsTabButton(
-            text = "Create Preset",
+            text = "Create",
             selected = selectedTab == PresetSettingsTab.Create,
             onClick = { onSelectedTabChange(PresetSettingsTab.Create) },
+            fontSize = 12.sp,
             modifier = Modifier.weight(1f)
         )
         Spacer(modifier = Modifier.width(6.dp))
         SettingsTabButton(
-            text = "Edit Preset",
+            text = "Edit",
             selected = selectedTab == PresetSettingsTab.Edit,
             onClick = { onSelectedTabChange(PresetSettingsTab.Edit) },
+            fontSize = 12.sp,
             modifier = Modifier.weight(1f)
         )
         Spacer(modifier = Modifier.width(6.dp))
@@ -2432,6 +3632,23 @@ private fun SettingsModeTabs(
             text = "Records",
             selected = selectedTab == PresetSettingsTab.Records,
             onClick = { onSelectedTabChange(PresetSettingsTab.Records) },
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        SettingsTabButton(
+            text = "History",
+            selected = selectedTab == PresetSettingsTab.History,
+            onClick = { onSelectedTabChange(PresetSettingsTab.History) },
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        SettingsTabButton(
+            text = "Backup",
+            selected = selectedTab == PresetSettingsTab.Backup,
+            onClick = { onSelectedTabChange(PresetSettingsTab.Backup) },
+            fontSize = 12.sp,
             modifier = Modifier.weight(1f)
         )
     }
@@ -2596,6 +3813,7 @@ private fun SettingsTabButton(
     selected: Boolean,
     onClick: () -> Unit,
     fontFamily: FontFamily? = null,
+    fontSize: TextUnit = 14.sp,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -2635,7 +3853,7 @@ private fun SettingsTabButton(
         FadingButtonText(
             text = text,
             color = if (selected) SuccessGreen else PrimaryText,
-            fontSize = 14.sp,
+            fontSize = fontSize,
             fontFamily = fontFamily
         )
     }

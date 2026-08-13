@@ -3,6 +3,7 @@ package com.example.thorspeedrunsplits
 import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Insert
@@ -12,6 +13,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Relation
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.room.Transaction
@@ -31,6 +33,51 @@ data class BestSegmentsEntity(
     @PrimaryKey val presetName: String,
     val segmentTimesMillis: List<Long>,
     val updatedAtMillis: Long
+)
+
+@Entity(
+    tableName = "completed_runs",
+    indices = [Index("presetName")]
+)
+data class CompletedRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val presetName: String,
+    val gameTitle: String,
+    val category: String,
+    val finalTimeMillis: Long,
+    val completedAtMillis: Long,
+    val wasPersonalBest: Boolean
+)
+
+@Entity(
+    tableName = "completed_run_splits",
+    primaryKeys = ["runId", "position"],
+    foreignKeys = [
+        ForeignKey(
+            entity = CompletedRunEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["runId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("runId")]
+)
+data class CompletedRunSplitEntity(
+    val runId: Long,
+    val position: Int,
+    val segmentName: String,
+    val splitTimeMillis: Long,
+    val comparisonSplitTimeMillis: Long?,
+    val wasGold: Boolean
+)
+
+data class StoredCompletedRun(
+    @Embedded val run: CompletedRunEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "runId"
+    )
+    val splits: List<CompletedRunSplitEntity>
 )
 
 @Entity(tableName = "split_presets")
@@ -96,6 +143,32 @@ interface BestSegmentsDao {
 
     @Query("DELETE FROM best_segments WHERE presetName = :presetName")
     suspend fun deleteByPresetName(presetName: String)
+}
+
+@Dao
+interface CompletedRunDao {
+    @Insert
+    suspend fun insertRun(run: CompletedRunEntity): Long
+
+    @Insert
+    suspend fun insertSplits(splits: List<CompletedRunSplitEntity>)
+
+    @Transaction
+    @Query("SELECT * FROM completed_runs ORDER BY completedAtMillis DESC")
+    suspend fun getAllWithSplits(): List<StoredCompletedRun>
+
+    @Query("DELETE FROM completed_runs WHERE presetName = :presetName")
+    suspend fun deleteByPresetName(presetName: String)
+
+    @Transaction
+    suspend fun insertWithSplits(
+        run: CompletedRunEntity,
+        splits: List<CompletedRunSplitEntity>
+    ): Long {
+        val runId = insertRun(run)
+        insertSplits(splits.map { it.copy(runId = runId) })
+        return runId
+    }
 }
 
 @Dao
@@ -197,17 +270,20 @@ class LongListConverters {
     entities = [
         PersonalBestRunEntity::class,
         BestSegmentsEntity::class,
+        CompletedRunEntity::class,
+        CompletedRunSplitEntity::class,
         SplitPresetEntity::class,
         SplitPresetSegmentEntity::class,
         AppPreferenceEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(LongListConverters::class)
 abstract class ThorSpeedrunDatabase : RoomDatabase() {
     abstract fun personalBestRunDao(): PersonalBestRunDao
     abstract fun bestSegmentsDao(): BestSegmentsDao
+    abstract fun completedRunDao(): CompletedRunDao
     abstract fun splitPresetDao(): SplitPresetDao
     abstract fun appPreferenceDao(): AppPreferenceDao
 
@@ -290,6 +366,47 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `completed_runs` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `presetName` TEXT NOT NULL,
+                        `gameTitle` TEXT NOT NULL,
+                        `category` TEXT NOT NULL,
+                        `finalTimeMillis` INTEGER NOT NULL,
+                        `completedAtMillis` INTEGER NOT NULL,
+                        `wasPersonalBest` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_completed_runs_presetName` " +
+                        "ON `completed_runs` (`presetName`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `completed_run_splits` (
+                        `runId` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `segmentName` TEXT NOT NULL,
+                        `splitTimeMillis` INTEGER NOT NULL,
+                        `comparisonSplitTimeMillis` INTEGER,
+                        `wasGold` INTEGER NOT NULL,
+                        PRIMARY KEY(`runId`, `position`),
+                        FOREIGN KEY(`runId`) REFERENCES `completed_runs`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_completed_run_splits_runId` " +
+                        "ON `completed_run_splits` (`runId`)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): ThorSpeedrunDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -301,7 +418,8 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
                         MIGRATION_1_2,
                         MIGRATION_2_3,
                         MIGRATION_3_4,
-                        MIGRATION_4_5
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
                     )
                     .build()
                     .also { instance = it }
