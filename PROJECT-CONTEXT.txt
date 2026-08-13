@@ -316,3 +316,4 @@ Change Log
 - 2026-08-13: Added Room-backed completed-run history, a History tab with compact run details, and an in-run UNDO control that also rolls back gold updates from undone splits.
 - 2026-08-13: Added multi-preset backup selection and system-folder export using a versioned, import-ready `.thorbackup.json` bundle containing preset definitions, stats, PBs, golds, and completed-run history.
 - 2026-08-13: Added validated `.thorbackup.json` import with transactional preset/record restoration, safe same-name conflict handling, history deduplication, and automatic loading of the backed-up active preset.
+- [APK] v0.5 released
