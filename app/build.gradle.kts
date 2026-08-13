@@ -16,8 +16,8 @@ android {
         applicationId = "com.example.thorspeedrunsplits"
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.4.2"
+        versionCode = 7
+        versionName = "0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -55,6 +55,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
