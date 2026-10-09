@@ -317,3 +317,5 @@ Change Log
 - 2026-08-13: Added multi-preset backup selection and system-folder export using a versioned, import-ready `.thorbackup.json` bundle containing preset definitions, stats, PBs, golds, and completed-run history.
 - 2026-08-13: Added validated `.thorbackup.json` import with transactional preset/record restoration, safe same-name conflict handling, history deduplication, and automatic loading of the backed-up active preset.
 - [APK] v0.5 released
+- 2026-10-09: Bumped app metadata to v0.6/versionCode 8 and refreshed the README with the complete current feature set while preserving all screenshots.
+- 2026-10-09: Added a persisted OLED Screen Shift toggle under Theme; when enabled, the full interface follows a subtle nine-position two-pixel pattern every 30 seconds to reduce static OLED wear on Thor and Retroid Duo displays.

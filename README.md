@@ -18,23 +18,18 @@ You can add it to <b>Obtainium</b> here:
 
 ## Features
 
-- LiveSplit-style split rows with split names, row colors, PB times, live deltas, and a large main timer.
-- Manual run controls with large `SPLIT`, `RESET`, and `DONE` states.
-- Scrollable split list that keeps the next split visible as the run advances.
-- Custom split presets with editable game title, category, row names, row colors, row order, and row count.
-- Persistent presets stored with Room.
-- Persistent loaded preset selection across app restarts.
-- Per-preset attempted run count and total time tracked in the top-left of the timer screen.
-- Room-backed personal bests saved only when a run is completed.
-- PB comparison deltas while running, including active-split green deltas after segment time loss and red count-up whenever behind PB.
-- Best segment tracking per preset with gold split highlighting.
-- Records tab for viewing PB split times, PB completion date/time, best segments, and clearing PB/gold data.
-- Light, Dark, and OLED themes, plus an option to follow Android system light/dark mode.
-- Font selection for Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
-- Settings updater row that automatically checks the latest GitHub release and shows an inline `Update Now` release-page link when an update is available.
-- Subtle button animations and hardware vibration feedback.
-- Fullscreen immersive mode that hides Android status/navigation bars.
-- AndroidX Material vector icons for settings, close, and row movement controls.
+- LiveSplit-style timer with color-coded rows, PB times, live ahead/behind deltas, automatic scrolling, and compact time formatting.
+- Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with vibration and subtle animations.
+- Persistent personal bests, gold/best segments, Sum of Best, attempt count, and total run time for every preset.
+- Completed-run history with saved game/category and split snapshots, comparison deltas, golds, and largest gain/loss details.
+- Records tools to view PB completion time, inspect PB/gold splits, and clear individual golds, all golds, or the PB.
+- Custom presets with editable names, game, category, split names, colors, order, and row count; presets can be loaded, edited, deleted, or reset to the built-in example.
+- Compatible preset edits preserve mapped PB and best-segment data, while destructive deletes require confirmation.
+- Room persistence for presets, records, history, statistics, preferences, and the last loaded preset.
+- Multi-preset JSON backup and restore through Android's file picker, including records, stats, and history; imports are validated, repeat-safe, and merge without overwriting conflicting presets.
+- Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
+- Automatic GitHub release checks with an in-app `Update Now` link when a newer version is available.
+- Immersive fullscreen layout designed for the AYN Thor's 1080x1240 bottom AMOLED display, with large touch targets and long-title handling.
 
 ## Screenshots
 

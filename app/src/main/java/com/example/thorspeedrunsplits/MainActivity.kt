@@ -69,6 +69,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -206,10 +207,24 @@ private data class HistoricalRunImportKey(
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
+private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val FontPreferenceKey = "font_mode"
+private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
 private const val UntimedSplitSentinel = -1L
+
+private val OledScreenShiftPattern = listOf(
+    0f to 0f,
+    2f to 0f,
+    2f to 2f,
+    0f to 2f,
+    -2f to 2f,
+    -2f to 0f,
+    -2f to -2f,
+    0f to -2f,
+    2f to -2f
+)
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
     return PersonalBestRunEntity(
@@ -883,6 +898,8 @@ private fun ThorSpeedrunSplitsApp() {
     var activePreset by remember { mutableStateOf(DefaultPreset) }
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
+    var oledScreenShiftEnabled by remember { mutableStateOf(false) }
+    var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
@@ -1215,6 +1232,8 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(ThemePreferenceKey)
         )
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
+        oledScreenShiftEnabled =
+            appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -1240,6 +1259,15 @@ private fun ThorSpeedrunSplitsApp() {
                 }
             }
             delay(33L)
+        }
+    }
+
+    LaunchedEffect(oledScreenShiftEnabled) {
+        oledScreenShiftIndex = 0
+        while (oledScreenShiftEnabled) {
+            delay(OledScreenShiftIntervalMillis)
+            oledScreenShiftIndex =
+                (oledScreenShiftIndex + 1) % OledScreenShiftPattern.size
         }
     }
 
@@ -1317,11 +1345,16 @@ private fun ThorSpeedrunSplitsApp() {
         0L
     }
     val displayedTotalTimeMillis = activePresetStats.totalTimeMillis + liveUnpersistedRunMillis
+    val oledScreenShift = OledScreenShiftPattern[oledScreenShiftIndex]
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(OledBlack)
+            .graphicsLayer {
+                translationX = if (oledScreenShiftEnabled) oledScreenShift.first else 0f
+                translationY = if (oledScreenShiftEnabled) oledScreenShift.second else 0f
+            }
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -1634,6 +1667,7 @@ private fun ThorSpeedrunSplitsApp() {
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
+                    oledScreenShiftEnabled = oledScreenShiftEnabled,
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -1661,6 +1695,17 @@ private fun ThorSpeedrunSplitsApp() {
                             appPreferenceDao.upsert(
                                 AppPreferenceEntity(
                                     key = UseSystemThemePreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
+                    onOledScreenShiftChange = { enabled ->
+                        oledScreenShiftEnabled = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = OledScreenShiftPreferenceKey,
                                     value = enabled.toString()
                                 )
                             )
@@ -2576,11 +2621,13 @@ private fun SettingsPanel(
     selectedThemeMode: AppThemeMode,
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
+    oledScreenShiftEnabled: Boolean,
     selectedFontMode: AppFontMode,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
+    onOledScreenShiftChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
     onRequestBackupImport: () -> Unit,
@@ -2698,6 +2745,11 @@ private fun SettingsPanel(
                     useSystemTheme = useSystemTheme,
                     onUseSystemThemeChange = onUseSystemThemeChange,
                     onSelectedThemeModeChange = onSelectedThemeModeChange
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OledScreenShiftToggle(
+                    enabled = oledScreenShiftEnabled,
+                    onEnabledChange = onOledScreenShiftChange
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 FontModeToggle(
@@ -3757,6 +3809,42 @@ private fun ThemeModeToggle(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun OledScreenShiftToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "OLED Screen Shift",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Moves the interface slightly every 30 seconds",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        PanelTextButton(
+            text = if (enabled) "ON" else "OFF",
+            onClick = { onEnabledChange(!enabled) },
+            modifier = Modifier.size(width = 76.dp, height = 34.dp)
+        )
     }
 }
 
