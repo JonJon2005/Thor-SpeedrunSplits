@@ -1,7 +1,14 @@
 package com.example.thorspeedrunsplits
 
+import android.Manifest
+import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -9,6 +16,7 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -22,11 +30,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,16 +57,39 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -69,9 +103,11 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -93,6 +129,7 @@ import java.util.Locale
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -157,6 +194,19 @@ private data class GithubRelease(
     val htmlUrl: String
 )
 
+private data class ScreenCaptureConsent(
+    val data: Intent
+)
+
+private data class RecordingResolution(
+    val name: String,
+    val width: Int,
+    val height: Int
+) {
+    val label: String
+        get() = "$name ($width × $height)"
+}
+
 private sealed interface UpdateCheckState {
     data object Idle : UpdateCheckState
     data object Checking : UpdateCheckState
@@ -206,10 +256,70 @@ private data class HistoricalRunImportKey(
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
+private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val FontPreferenceKey = "font_mode"
+private const val RecordingFolderPreferenceKey = "recording_folder_uri"
+private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
+private const val RecordAudioPreferenceKey = "record_audio"
+private const val RecordingResolutionPreferenceKey = "recording_resolution"
+private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
+private const val DefaultRecordingBitrateMbps = 10
+private const val MinRecordingBitrateMbps = 2
+private const val MaxRecordingBitrateMbps = 16
+private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
+private const val GitHubRepositoryUrl =
+    "https://github.com/JonJon2005/Thor-SpeedrunSplits"
+private const val CreatorWebsiteUrl = "https://jonathangallo.dev"
+private const val InternalDisplayId = 0
 private const val UntimedSplitSentinel = -1L
+
+private val CommonRecordingResolutions = listOf(
+    RecordingResolution(name = "240p", width = 426, height = 240),
+    RecordingResolution(name = "480p", width = 854, height = 480),
+    RecordingResolution(name = "720p", width = 1280, height = 720),
+    RecordingResolution(name = "1080p", width = 1920, height = 1080)
+)
+
+private fun screenNameForDisplayId(displayId: Int?): String {
+    return when (displayId) {
+        null -> "Unknown screen"
+        InternalDisplayId -> "Internal screen"
+        else -> "External screen"
+    }
+}
+
+private fun recordingFolderLabel(folderUri: String?): String {
+    if (folderUri.isNullOrBlank()) {
+        return "App storage / Movies / Run Recordings"
+    }
+    return runCatching {
+        val documentId = DocumentsContract.getTreeDocumentId(Uri.parse(folderUri))
+        val path = documentId.substringAfter(':', "").trim('/')
+        if (path.isBlank()) "Selected storage root" else path.substringAfterLast('/')
+    }.getOrDefault("Selected custom folder")
+}
+
+private fun MediaProjectionManager.internalDisplayCaptureIntent(): Intent {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+    } else {
+        createScreenCaptureIntent()
+    }
+}
+
+private val OledScreenShiftPattern = listOf(
+    0f to 0f,
+    2f to 0f,
+    2f to 2f,
+    0f to 2f,
+    -2f to 2f,
+    -2f to 0f,
+    -2f to -2f,
+    0f to -2f,
+    2f to -2f
+)
 
 private fun Run.toPersonalBestRunEntity(): PersonalBestRunEntity {
     return PersonalBestRunEntity(
@@ -699,6 +809,7 @@ private val DefaultPreset = SplitPreset(
 )
 
 private val GoldSplit = Color(0xFFFFD84D)
+private val RecordingRed = Color(0xFFFF3B30)
 private val LinkBlue = Color(0xFF5EA1FF)
 private const val ButtonFadeMillis = 280
 private const val ButtonVibrationMillis = 18L
@@ -875,17 +986,29 @@ private fun ThorSpeedrunSplitsApp() {
     val splitPresetDao = remember(database) { database.splitPresetDao() }
     val appPreferenceDao = remember(database) { database.appPreferenceDao() }
     val coroutineScope = rememberCoroutineScope()
+    val availableRecordingResolutions = remember { CommonRecordingResolutions }
     var isRunning by remember { mutableStateOf(false) }
     var isFinished by remember { mutableStateOf(false) }
     var activeSplitIndex by remember { mutableStateOf(0) }
     var resetScrollRequest by remember { mutableStateOf(0) }
     var isSettingsOpen by remember { mutableStateOf(false) }
+    var settingsNavigationRequest by remember { mutableStateOf(0) }
     var activePreset by remember { mutableStateOf(DefaultPreset) }
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
+    var oledScreenShiftEnabled by remember { mutableStateOf(false) }
+    var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
-    var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
+    var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
+    var recordingFolderUri by remember { mutableStateOf<String?>(null) }
+    var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
+    var recordAudioEnabled by remember { mutableStateOf(false) }
+    var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
+    var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
+    var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
+    var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
+    var recordingSessionActive by remember { mutableStateOf(RunRecordingService.isRecording) }
     var editPresetScrollRequest by remember { mutableStateOf(0) }
     var presetPendingDelete by remember { mutableStateOf<SplitPreset?>(null) }
     val savedPresets = remember {
@@ -932,6 +1055,139 @@ private fun ThorSpeedrunSplitsApp() {
     var backupExportState by remember { mutableStateOf<BackupExportState>(BackupExportState.Idle) }
     var backupImportState by remember { mutableStateOf<BackupImportState>(BackupImportState.Idle) }
     var pendingBackupBundle by remember { mutableStateOf<BackupBundle?>(null) }
+    val mediaProjectionManager = remember {
+        appContext.getSystemService(MediaProjectionManager::class.java)
+    }
+
+    DisposableEffect(appContext) {
+        val recordingStateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == RunRecordingService.ACTION_RECORDING_STATE) {
+                    recordingSessionActive = intent.getBooleanExtra(
+                        RunRecordingService.EXTRA_RECORDING_ACTIVE,
+                        false
+                    )
+                }
+            }
+        }
+        val filter = IntentFilter(RunRecordingService.ACTION_RECORDING_STATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(
+                recordingStateReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appContext.registerReceiver(recordingStateReceiver, filter)
+        }
+        onDispose {
+            appContext.unregisterReceiver(recordingStateReceiver)
+        }
+    }
+
+    fun beginRun(pressTime: Long, consent: ScreenCaptureConsent?) {
+        if (isRunning) return
+        val presetName = activePreset.presetName
+        val currentStats = presetStats[presetName] ?: PresetStats()
+        presetStats[presetName] = currentStats.copy(
+            attemptedRuns = currentStats.attemptedRuns + 1
+        )
+        persistedCurrentRunMillis = 0L
+        runComparison = savedRuns[presetName]
+            ?.takeIf { it.splitTimes.size == activePreset.segments.size }
+        isRunning = true
+        startedAtMillis = pressTime
+        nowMillis = pressTime
+        if (recordOppositeScreenEnabled && consent != null) {
+            val selectedResolution = recordingResolution
+                ?: availableRecordingResolutions.last()
+            RunRecordingService.start(
+                context = appContext,
+                projectionData = consent.data,
+                gameName = activePreset.gameTitle,
+                category = activePreset.category,
+                folderUri = recordingFolderUri,
+                resolutionWidth = selectedResolution.width,
+                resolutionHeight = selectedResolution.height,
+                bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000,
+                recordAudio = recordAudioEnabled
+            )
+            recordingSessionActive = true
+            screenCaptureConsent = null
+        }
+        coroutineScope.launch {
+            splitPresetDao.ensurePresetExists(
+                preset = activePreset.toSplitPresetEntity(currentStats),
+                segments = activePreset.toSplitPresetSegmentEntities()
+            )
+            splitPresetDao.incrementAttemptedRuns(presetName)
+        }
+    }
+
+    fun stopRunRecording(runLengthMillis: Long) {
+        if (!recordingSessionActive) return
+        RunRecordingService.stop(appContext, runLengthMillis)
+    }
+
+    val screenCaptureConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val approved = result.resultCode == Activity.RESULT_OK && result.data != null
+        recordOppositeScreenEnabled = approved
+        val consent = result.data?.takeIf { approved }?.let(::ScreenCaptureConsent)
+        screenCaptureConsent = consent
+        coroutineScope.launch {
+            appPreferenceDao.upsert(
+                AppPreferenceEntity(
+                    key = RecordOppositeScreenPreferenceKey,
+                    value = approved.toString()
+                )
+            )
+        }
+        if (approved && pendingRunStartAfterConsent && consent != null) {
+            pendingRunStartAfterConsent = false
+            beginRun(SystemClock.elapsedRealtime(), consent)
+        } else if (!approved) {
+            pendingRunStartAfterConsent = false
+        }
+    }
+    val playbackAudioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        recordAudioEnabled = granted
+        coroutineScope.launch {
+            appPreferenceDao.upsert(
+                AppPreferenceEntity(
+                    key = RecordAudioPreferenceKey,
+                    value = granted.toString()
+                )
+            )
+        }
+    }
+    val recordingFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { selectedFolderUri ->
+        if (selectedFolderUri != null) {
+            val permissionFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching {
+                appContext.contentResolver.takePersistableUriPermission(
+                    selectedFolderUri,
+                    permissionFlags
+                )
+            }
+            recordingFolderUri = selectedFolderUri.toString()
+            coroutineScope.launch {
+                appPreferenceDao.upsert(
+                    AppPreferenceEntity(
+                        key = RecordingFolderPreferenceKey,
+                        value = selectedFolderUri.toString()
+                    )
+                )
+            }
+        }
+    }
     val backupFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { selectedFolderUri ->
@@ -965,6 +1221,14 @@ private fun ThorSpeedrunSplitsApp() {
     }
 
     fun resetRun(segmentCount: Int) {
+        if (recordingSessionActive) {
+            val runLengthMillis = if (isRunning && startedAtMillis > 0L) {
+                SystemClock.elapsedRealtime() - startedAtMillis
+            } else {
+                finishedElapsedMillis
+            }
+            stopRunRecording(runLengthMillis)
+        }
         isRunning = false
         isFinished = false
         activeSplitIndex = 0
@@ -1215,6 +1479,37 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(ThemePreferenceKey)
         )
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
+        oledScreenShiftEnabled =
+            appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
+        recordingFolderUri = appPreferenceDao.getValue(RecordingFolderPreferenceKey)
+            ?.takeIf { it.isNotBlank() }
+        recordOppositeScreenEnabled =
+            appPreferenceDao.getValue(RecordOppositeScreenPreferenceKey) == "true"
+        recordAudioEnabled =
+            appPreferenceDao.getValue(RecordAudioPreferenceKey) == "true" &&
+                appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        val savedResolution = appPreferenceDao
+            .getValue(RecordingResolutionPreferenceKey)
+            ?.split('x')
+            ?.takeIf { it.size == 2 }
+            ?.let { parts ->
+                RecordingResolution(
+                    name = "",
+                    width = parts[0].toIntOrNull() ?: 0,
+                    height = parts[1].toIntOrNull() ?: 0
+                )
+            }
+        recordingResolution = availableRecordingResolutions.firstOrNull {
+            savedResolution?.let { saved ->
+                it.width == saved.width && it.height == saved.height
+            } == true
+        } ?: availableRecordingResolutions.last()
+        recordingBitrateMbps = appPreferenceDao
+            .getValue(RecordingBitratePreferenceKey)
+            ?.toIntOrNull()
+            ?.coerceIn(MinRecordingBitrateMbps, MaxRecordingBitrateMbps)
+            ?: DefaultRecordingBitrateMbps
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -1240,6 +1535,15 @@ private fun ThorSpeedrunSplitsApp() {
                 }
             }
             delay(33L)
+        }
+    }
+
+    LaunchedEffect(oledScreenShiftEnabled) {
+        oledScreenShiftIndex = 0
+        while (oledScreenShiftEnabled) {
+            delay(OledScreenShiftIntervalMillis)
+            oledScreenShiftIndex =
+                (oledScreenShiftIndex + 1) % OledScreenShiftPattern.size
         }
     }
 
@@ -1317,11 +1621,16 @@ private fun ThorSpeedrunSplitsApp() {
         0L
     }
     val displayedTotalTimeMillis = activePresetStats.totalTimeMillis + liveUnpersistedRunMillis
+    val oledScreenShift = OledScreenShiftPattern[oledScreenShiftIndex]
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(OledBlack)
+            .graphicsLayer {
+                translationX = if (oledScreenShiftEnabled) oledScreenShift.first else 0f
+                translationY = if (oledScreenShiftEnabled) oledScreenShift.second else 0f
+            }
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -1354,7 +1663,7 @@ private fun ThorSpeedrunSplitsApp() {
                         .height(titleHeight)
                         .padding(
                             start = 24.dp,
-                            end = if (isWideThorShape) 152.dp else 24.dp
+                            end = 84.dp
                         )
                 )
                 SplitList(
@@ -1398,22 +1707,18 @@ private fun ThorSpeedrunSplitsApp() {
 
                         val pressTime = SystemClock.elapsedRealtime()
                         if (!isRunning) {
-                            val presetName = activePreset.presetName
-                            val currentStats = presetStats[presetName] ?: PresetStats()
-                            presetStats[presetName] = currentStats.copy(
-                                attemptedRuns = currentStats.attemptedRuns + 1
-                            )
-                            persistedCurrentRunMillis = 0L
-                            runComparison = savedRunForActivePreset
-                            isRunning = true
-                            startedAtMillis = pressTime
-                            nowMillis = pressTime
-                            coroutineScope.launch {
-                                splitPresetDao.ensurePresetExists(
-                                    preset = activePreset.toSplitPresetEntity(currentStats),
-                                    segments = activePreset.toSplitPresetSegmentEntities()
-                                )
-                                splitPresetDao.incrementAttemptedRuns(presetName)
+                            if (recordOppositeScreenEnabled) {
+                                val consent = screenCaptureConsent
+                                if (consent == null) {
+                                    pendingRunStartAfterConsent = true
+                                    mediaProjectionManager
+                                        ?.internalDisplayCaptureIntent()
+                                        ?.let(screenCaptureConsentLauncher::launch)
+                                } else {
+                                    beginRun(pressTime, consent)
+                                }
+                            } else {
+                                beginRun(pressTime, null)
                             }
                             return@BottomControls
                         }
@@ -1450,6 +1755,7 @@ private fun ThorSpeedrunSplitsApp() {
                         completedTimes[activeSplitIndex] = splitElapsed
 
                         if (activeSplitIndex == activePreset.segments.lastIndex) {
+                            stopRunRecording(splitElapsed)
                             isRunning = false
                             isFinished = true
                             finishedElapsedMillis = splitElapsed
@@ -1620,6 +1926,7 @@ private fun ThorSpeedrunSplitsApp() {
                     .fillMaxSize()
             ) {
                 SettingsPanel(
+                    openNavigationRequest = settingsNavigationRequest,
                     onClose = {
                         presetPendingDelete = null
                         isSettingsOpen = false
@@ -1634,6 +1941,7 @@ private fun ThorSpeedrunSplitsApp() {
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
+                    oledScreenShiftEnabled = oledScreenShiftEnabled,
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -1666,6 +1974,17 @@ private fun ThorSpeedrunSplitsApp() {
                             )
                         }
                     },
+                    onOledScreenShiftChange = { enabled ->
+                        oledScreenShiftEnabled = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = OledScreenShiftPreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
                     onSelectedFontModeChange = { fontMode ->
                         selectedFontMode = fontMode
                         coroutineScope.launch {
@@ -1673,6 +1992,115 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = FontPreferenceKey,
                                     value = fontMode.storageValue
+                                )
+                            )
+                        }
+                    },
+                    recordingFolderUri = recordingFolderUri,
+                    availableRecordingResolutions = availableRecordingResolutions,
+                    recordingResolution = recordingResolution
+                        ?: availableRecordingResolutions.last(),
+                    recordingBitrateMbps = recordingBitrateMbps,
+                    recordAudioEnabled = recordAudioEnabled,
+                    recordOppositeScreenEnabled = recordOppositeScreenEnabled,
+                    onRecordOppositeScreenChange = { enabled ->
+                        if (enabled) {
+                            mediaProjectionManager?.internalDisplayCaptureIntent()?.let {
+                                screenCaptureConsentLauncher.launch(it)
+                            }
+                        } else {
+                            recordOppositeScreenEnabled = false
+                            screenCaptureConsent = null
+                            pendingRunStartAfterConsent = false
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordOppositeScreenPreferenceKey,
+                                        value = "false"
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onRecordingResolutionChange = { resolution ->
+                        recordingResolution = resolution
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingResolutionPreferenceKey,
+                                    value = "${resolution.width}x${resolution.height}"
+                                )
+                            )
+                        }
+                    },
+                    onRecordingBitrateChange = { mbps ->
+                        val normalizedMbps = mbps.coerceIn(
+                            MinRecordingBitrateMbps,
+                            MaxRecordingBitrateMbps
+                        )
+                        recordingBitrateMbps = normalizedMbps
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingBitratePreferenceKey,
+                                    value = normalizedMbps.toString()
+                                )
+                            )
+                        }
+                    },
+                    onRecordAudioChange = { enabled ->
+                        if (!enabled) {
+                            recordAudioEnabled = false
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordAudioPreferenceKey,
+                                        value = "false"
+                                    )
+                                )
+                            }
+                        } else if (
+                            appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            recordAudioEnabled = true
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordAudioPreferenceKey,
+                                        value = "true"
+                                    )
+                                )
+                            }
+                        } else {
+                            playbackAudioPermissionLauncher.launch(
+                                Manifest.permission.RECORD_AUDIO
+                            )
+                        }
+                    },
+                    onChooseRecordingFolder = {
+                        recordingFolderLauncher.launch(
+                            recordingFolderUri?.let(Uri::parse)
+                        )
+                    },
+                    onUseDefaultRecordingFolder = {
+                        val previousFolderUri = recordingFolderUri
+                        if (previousFolderUri != null) {
+                            val permissionFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            runCatching {
+                                appContext.contentResolver.releasePersistableUriPermission(
+                                    Uri.parse(previousFolderUri),
+                                    permissionFlags
+                                )
+                            }
+                        }
+                        recordingFolderUri = null
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingFolderPreferenceKey,
+                                    value = ""
                                 )
                             )
                         }
@@ -1705,9 +2133,9 @@ private fun ThorSpeedrunSplitsApp() {
                             )
                         )
                     },
-                    selectedTab = presetSettingsTab,
+                    selectedSection = settingsSection,
                     editPresetScrollRequest = editPresetScrollRequest,
-                    onSelectedTabChange = { presetSettingsTab = it },
+                    onSelectedSectionChange = { settingsSection = it },
                     draftPresetName = draftPresetName,
                     onDraftPresetNameChange = { draftPresetName = it },
                     draftGameTitle = draftGameTitle,
@@ -1799,7 +2227,7 @@ private fun ThorSpeedrunSplitsApp() {
                     onStartEditPreset = { preset ->
                         if (preset.presetName != DefaultPreset.presetName) {
                             startEditingPreset(preset)
-                            presetSettingsTab = PresetSettingsTab.Edit
+                            settingsSection = SettingsSection.Presets
                             editPresetScrollRequest += 1
                         }
                     },
@@ -2039,10 +2467,25 @@ private fun ThorSpeedrunSplitsApp() {
                     .align(Alignment.TopEnd)
                     .padding(top = 12.dp, end = 24.dp)
             ) {
-                SettingsButton(
-                    onClick = { isSettingsOpen = true },
-                    modifier = Modifier.size(width = 104.dp, height = 48.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AnimatedVisibility(
+                        visible = recordingSessionActive,
+                        enter = fadeIn(animationSpec = tween(ButtonFadeMillis)),
+                        exit = fadeOut(animationSpec = tween(ButtonFadeMillis))
+                    ) {
+                        RecordingIndicator(modifier = Modifier.size(48.dp))
+                    }
+                    SettingsButton(
+                        onClick = {
+                            settingsNavigationRequest += 1
+                            isSettingsOpen = true
+                        },
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
             }
         }
     }
@@ -2054,12 +2497,33 @@ private data class ButtonSize(
     val height: Dp
 )
 
-private enum class PresetSettingsTab {
+private enum class SettingsSection(val label: String) {
+    Customization("Customization"),
+    Presets("Presets"),
+    Runs("Runs & Records"),
+    Recording("Recording"),
+    Data("Backup & Data"),
+    About("About")
+}
+
+private val SettingsSection.icon: ImageVector
+    get() = when (this) {
+        SettingsSection.Customization -> Icons.Filled.Settings
+        SettingsSection.Presets -> Icons.AutoMirrored.Filled.List
+        SettingsSection.Runs -> Icons.Filled.DateRange
+        SettingsSection.Recording -> Icons.Filled.PlayArrow
+        SettingsSection.Data -> Icons.Filled.Share
+        SettingsSection.About -> Icons.Filled.Info
+    }
+
+private enum class PresetSettingsView {
     Create,
-    Edit,
+    Edit
+}
+
+private enum class RunsSettingsView {
     Records,
-    History,
-    Backup
+    History
 }
 
 @Composable
@@ -2564,7 +3028,32 @@ private fun SettingsButton(
 }
 
 @Composable
+private fun RecordingIndicator(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "recordingIndicator")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.28f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1_200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "recordingIndicatorAlpha"
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+    ) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .background(RecordingRed.copy(alpha = dotAlpha), CircleShape)
+        )
+    }
+}
+
+@Composable
 private fun SettingsPanel(
+    openNavigationRequest: Int,
     onClose: () -> Unit,
     savedPresets: List<SplitPreset>,
     activePreset: SplitPreset,
@@ -2576,17 +3065,31 @@ private fun SettingsPanel(
     selectedThemeMode: AppThemeMode,
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
+    oledScreenShiftEnabled: Boolean,
     selectedFontMode: AppFontMode,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
+    onOledScreenShiftChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
+    recordingFolderUri: String?,
+    availableRecordingResolutions: List<RecordingResolution>,
+    recordingResolution: RecordingResolution,
+    recordingBitrateMbps: Int,
+    recordAudioEnabled: Boolean,
+    recordOppositeScreenEnabled: Boolean,
+    onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onRecordingResolutionChange: (RecordingResolution) -> Unit,
+    onRecordingBitrateChange: (Int) -> Unit,
+    onRecordAudioChange: (Boolean) -> Unit,
+    onChooseRecordingFolder: () -> Unit,
+    onUseDefaultRecordingFolder: () -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
     onRequestBackupImport: () -> Unit,
-    selectedTab: PresetSettingsTab,
+    selectedSection: SettingsSection,
     editPresetScrollRequest: Int,
-    onSelectedTabChange: (PresetSettingsTab) -> Unit,
+    onSelectedSectionChange: (SettingsSection) -> Unit,
     draftPresetName: String,
     onDraftPresetNameChange: (String) -> Unit,
     draftGameTitle: String,
@@ -2627,19 +3130,32 @@ private fun SettingsPanel(
     var selectedHistoricalRunId by remember(activePreset.presetName) {
         mutableStateOf<Long?>(null)
     }
+    var selectedPresetView by remember { mutableStateOf(PresetSettingsView.Create) }
+    var selectedRunsView by remember { mutableStateOf(RunsSettingsView.Records) }
+    var isNavigationOpen by remember { mutableStateOf(false) }
     val availableBackupPresetNames = savedPresets.map { it.presetName }
     var selectedBackupPresetNames by remember {
         mutableStateOf(setOf(activePreset.presetName))
     }
 
-    LaunchedEffect(editPresetScrollRequest, selectedTab) {
-        if (editPresetScrollRequest > 0 && selectedTab == PresetSettingsTab.Edit) {
-            settingsListState.animateScrollToItem(1)
+    LaunchedEffect(editPresetScrollRequest, selectedSection) {
+        if (editPresetScrollRequest > 0 && selectedSection == SettingsSection.Presets) {
+            selectedPresetView = PresetSettingsView.Edit
+            settingsListState.scrollToItem(0)
         }
     }
 
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != PresetSettingsTab.History) {
+    LaunchedEffect(openNavigationRequest) {
+        if (openNavigationRequest > 0) {
+            isNavigationOpen = true
+        }
+    }
+
+    LaunchedEffect(selectedSection, selectedRunsView) {
+        settingsListState.scrollToItem(0)
+        if (selectedSection != SettingsSection.Runs ||
+            selectedRunsView != RunsSettingsView.History
+        ) {
             selectedHistoricalRunId = null
         }
     }
@@ -2650,48 +3166,26 @@ private fun SettingsPanel(
             .ifEmpty { setOf(activePreset.presetName) }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .background(OledBlack)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(104.dp)
-                .background(RowBlack)
-                .border(width = 0.5.dp, color = DividerColor)
-                .padding(start = 24.dp, end = 14.dp)
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Settings",
-                    color = PrimaryText,
-                    fontSize = 24.sp,
-                    lineHeight = 24.sp,
-                    maxLines = 1
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                UpdateCheckRow(
-                    updateCheckState = updateCheckState,
-                    onOpenRelease = onOpenRelease
-                )
-            }
-            CloseButton(
-                onClick = onClose,
-                modifier = Modifier.size(52.dp)
+        Column(modifier = Modifier.fillMaxSize()) {
+            SettingsStickyHeader(
+                selectedSection = selectedSection,
+                onOpenNavigation = { isNavigationOpen = true },
+                onClose = onClose
             )
-        }
-
-        LazyColumn(
-            state = settingsListState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 20.dp, vertical = 14.dp)
-        ) {
-            item {
-                SettingsSectionTitle("Theme")
+                LazyColumn(
+                    state = settingsListState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                ) {
+            if (selectedSection == SettingsSection.Customization) {
+                item {
+                SettingsSectionTitle("Appearance", Icons.Filled.Settings)
                 ThemeModeToggle(
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
@@ -2699,13 +3193,21 @@ private fun SettingsPanel(
                     onUseSystemThemeChange = onUseSystemThemeChange,
                     onSelectedThemeModeChange = onSelectedThemeModeChange
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                OledScreenShiftToggle(
+                    enabled = oledScreenShiftEnabled,
+                    onEnabledChange = onOledScreenShiftChange
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 FontModeToggle(
                     selectedFontMode = selectedFontMode,
                     onSelectedFontModeChange = onSelectedFontModeChange
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionTitle("Presets")
+                Spacer(modifier = Modifier.height(22.dp))
+                }
+            } else if (selectedSection == SettingsSection.Presets) {
+                item {
+                SettingsSectionTitle("Saved Presets", Icons.AutoMirrored.Filled.List)
                 savedPresets.forEach { preset ->
                     PresetLoadRow(
                         preset = preset,
@@ -2718,16 +3220,53 @@ private fun SettingsPanel(
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsModeTabs(
-                    selectedTab = selectedTab,
-                    onSelectedTabChange = onSelectedTabChange
+                PresetViewTabs(
+                    selectedView = selectedPresetView,
+                    onSelectedViewChange = { selectedPresetView = it }
                 )
                 Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else if (selectedSection == SettingsSection.Runs) {
+                item {
+                    RunsViewTabs(
+                        selectedView = selectedRunsView,
+                        onSelectedViewChange = { selectedRunsView = it }
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else if (selectedSection == SettingsSection.Recording) {
+                item {
+                    RecordingSettingsPanel(
+                        recordingFolderUri = recordingFolderUri,
+                        availableRecordingResolutions = availableRecordingResolutions,
+                        recordingResolution = recordingResolution,
+                        recordingBitrateMbps = recordingBitrateMbps,
+                        recordAudioEnabled = recordAudioEnabled,
+                        recordOppositeScreenEnabled = recordOppositeScreenEnabled,
+                        onRecordOppositeScreenChange = onRecordOppositeScreenChange,
+                        onRecordingResolutionChange = onRecordingResolutionChange,
+                        onRecordingBitrateChange = onRecordingBitrateChange,
+                        onRecordAudioChange = onRecordAudioChange,
+                        onChooseFolder = onChooseRecordingFolder,
+                        onUseDefaultFolder = onUseDefaultRecordingFolder
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
+            } else if (selectedSection == SettingsSection.About) {
+                item {
+                    AboutSettingsPanel(
+                        updateCheckState = updateCheckState,
+                        onOpenRelease = onOpenRelease
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
             }
 
-            if (selectedTab == PresetSettingsTab.Create) {
+            if (selectedSection == SettingsSection.Presets &&
+                selectedPresetView == PresetSettingsView.Create
+            ) {
                 item {
-                    SettingsSectionTitle("Create New")
+                    SettingsSectionTitle("Create New", Icons.Filled.Add)
                     LabeledTextInput(
                         label = "Preset Name",
                         value = draftPresetName,
@@ -2770,26 +3309,31 @@ private fun SettingsPanel(
                         PanelTextButton(
                             text = "ADD ROW",
                             onClick = onAddDraftSegment,
-                            modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Add,
+                            modifier = Modifier.size(width = 112.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
                             text = "SAVE PRESET",
                             onClick = onSaveDraftPreset,
-                            modifier = Modifier.size(width = 138.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Check,
+                            modifier = Modifier.size(width = 150.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
                             text = "RESET TO DEFAULT",
                             onClick = onResetDefault,
-                            modifier = Modifier.size(width = 148.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Refresh,
+                            modifier = Modifier.size(width = 178.dp, height = 40.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(22.dp))
                 }
-            } else if (selectedTab == PresetSettingsTab.Edit) {
+            } else if (selectedSection == SettingsSection.Presets &&
+                selectedPresetView == PresetSettingsView.Edit
+            ) {
                 item {
-                    SettingsSectionTitle("Edit Selected")
+                    SettingsSectionTitle("Edit Selected", Icons.Filled.Edit)
                     if (editTargetPresetName == null) {
                         Text(
                             text = "Choose EDIT on a custom preset.",
@@ -2847,19 +3391,23 @@ private fun SettingsPanel(
                             PanelTextButton(
                                 text = "ADD ROW",
                                 onClick = onAddEditSegment,
-                                modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                                imageVector = Icons.Filled.Add,
+                                modifier = Modifier.size(width = 112.dp, height = 40.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             PanelTextButton(
                                 text = "SAVE CHANGES",
                                 onClick = onSaveEditedPreset,
-                                modifier = Modifier.size(width = 126.dp, height = 40.dp)
+                                imageVector = Icons.Filled.Check,
+                                modifier = Modifier.size(width = 150.dp, height = 40.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
-            } else if (selectedTab == PresetSettingsTab.Records) {
+            } else if (selectedSection == SettingsSection.Runs &&
+                selectedRunsView == RunsSettingsView.Records
+            ) {
                 item {
                     RecordsPanel(
                         preset = activePreset,
@@ -2871,7 +3419,9 @@ private fun SettingsPanel(
                     )
                     Spacer(modifier = Modifier.height(22.dp))
                 }
-            } else if (selectedTab == PresetSettingsTab.History) {
+            } else if (selectedSection == SettingsSection.Runs &&
+                selectedRunsView == RunsSettingsView.History
+            ) {
                 val selectedHistoricalRun = activeRunHistory.firstOrNull {
                     it.id == selectedHistoricalRunId
                 }
@@ -2922,7 +3472,7 @@ private fun SettingsPanel(
                     }
                     item { Spacer(modifier = Modifier.height(22.dp)) }
                 }
-            } else {
+            } else if (selectedSection == SettingsSection.Data) {
                 item {
                     BackupHeader(
                         selectedPresetCount = selectedBackupPresetNames.size,
@@ -2959,6 +3509,7 @@ private fun SettingsPanel(
                                 selectedBackupPresetNames = availableBackupPresetNames.toSet()
                             },
                             enabled = !isBusy,
+                            imageVector = Icons.Filled.Check,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(40.dp)
@@ -2979,6 +3530,7 @@ private fun SettingsPanel(
                             text = "BACKUP",
                             onClick = { onRequestBackup(selectedBackupPresetNames) },
                             enabled = selectedBackupPresetNames.isNotEmpty() && !isBusy,
+                            imageVector = Icons.Filled.Share,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
@@ -2988,12 +3540,56 @@ private fun SettingsPanel(
                             text = "IMPORT",
                             onClick = onRequestBackupImport,
                             enabled = !isBusy,
+                            imageVector = Icons.Filled.Add,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(22.dp))
+                }
+            }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isNavigationOpen,
+            enter = fadeIn(animationSpec = tween(ButtonFadeMillis)),
+            exit = fadeOut(animationSpec = tween(ButtonFadeMillis)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x99000000))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { isNavigationOpen = false }
+                        )
+                )
+                AnimatedVisibility(
+                    visible = isNavigationOpen,
+                    enter = slideInHorizontally(
+                        animationSpec = tween(ButtonFadeMillis),
+                        initialOffsetX = { -it }
+                    ),
+                    exit = slideOutHorizontally(
+                        animationSpec = tween(ButtonFadeMillis),
+                        targetOffsetX = { -it }
+                    )
+                ) {
+                    SettingsSidebar(
+                        selectedSection = selectedSection,
+                        onSelectedSectionChange = { section ->
+                            onSelectedSectionChange(section)
+                            isNavigationOpen = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth(0.64f)
+                            .fillMaxHeight()
+                    )
                 }
             }
         }
@@ -3016,7 +3612,7 @@ private fun RecordsPanel(
     val hasPersonalBest = matchingPersonalBest != null
     val hasBestSegments = matchingBestSegments?.segmentTimes?.any { it != null } == true
 
-    SettingsSectionTitle("Records")
+    SettingsSectionTitle("Records", Icons.Filled.Star)
     Text(
         text = "${preset.gameTitle} - ${preset.category}",
         color = SuccessGreen,
@@ -3050,14 +3646,16 @@ private fun RecordsPanel(
             text = "CLEAR PB",
             onClick = onClearPersonalBest,
             enabled = hasPersonalBest,
-            modifier = Modifier.size(width = 112.dp, height = 40.dp)
+            imageVector = Icons.Filled.Delete,
+            modifier = Modifier.size(width = 132.dp, height = 40.dp)
         )
         Spacer(modifier = Modifier.width(10.dp))
         PanelTextButton(
             text = "CLEAR GOLDS",
             onClick = onClearBestSegments,
             enabled = hasBestSegments,
-            modifier = Modifier.size(width = 126.dp, height = 40.dp)
+            imageVector = Icons.Filled.Delete,
+            modifier = Modifier.size(width = 148.dp, height = 40.dp)
         )
     }
     Spacer(modifier = Modifier.height(12.dp))
@@ -3188,7 +3786,7 @@ private fun HistoryHeader(
     preset: SplitPreset,
     completedRunCount: Int
 ) {
-    SettingsSectionTitle("Run History")
+    SettingsSectionTitle("Run History", Icons.Filled.DateRange)
     Text(
         text = "${preset.gameTitle} - ${preset.category}",
         color = SuccessGreen,
@@ -3264,7 +3862,8 @@ private fun HistoricalRunRow(
         PanelTextButton(
             text = "DETAILS",
             onClick = onOpenDetails,
-            modifier = Modifier.size(width = 78.dp, height = 36.dp)
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            modifier = Modifier.size(width = 100.dp, height = 36.dp)
         )
     }
     Spacer(modifier = Modifier.height(6.dp))
@@ -3282,7 +3881,8 @@ private fun HistoricalRunDetailsHeader(
         PanelTextButton(
             text = "BACK",
             onClick = onBack,
-            modifier = Modifier.size(width = 72.dp, height = 38.dp)
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            modifier = Modifier.size(width = 92.dp, height = 38.dp)
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -3484,7 +4084,7 @@ private fun BackupHeader(
     backupExportState: BackupExportState,
     backupImportState: BackupImportState
 ) {
-    SettingsSectionTitle("Backup / Import")
+    SettingsSectionTitle("Backup / Import", Icons.Filled.Share)
     Text(
         text = "Back up or restore presets",
         color = PrimaryText,
@@ -3599,10 +4199,215 @@ private fun BackupPresetSelectionRow(
     Spacer(modifier = Modifier.height(6.dp))
 }
 
+private fun settingsSectionDescription(section: SettingsSection): String {
+    return when (section) {
+        SettingsSection.Customization -> "Appearance and display behavior"
+        SettingsSection.Presets -> "Create, load, and edit split layouts"
+        SettingsSection.Runs -> "Personal bests, golds, and completed attempts"
+        SettingsSection.Recording -> "Capture and save run recordings"
+        SettingsSection.Data -> "Back up or restore timer data"
+        SettingsSection.About -> "Version and update information"
+    }
+}
+
 @Composable
-private fun SettingsModeTabs(
-    selectedTab: PresetSettingsTab,
-    onSelectedTabChange: (PresetSettingsTab) -> Unit
+private fun SettingsStickyHeader(
+    selectedSection: SettingsSection,
+    onOpenNavigation: () -> Unit,
+    onClose: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 12.dp)
+    ) {
+        PanelIconButton(
+            imageVector = Icons.Filled.Menu,
+            contentDescription = "Open settings sections",
+            onClick = onOpenNavigation,
+            modifier = Modifier.size(46.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = selectedSection.label,
+                color = PrimaryText,
+                fontSize = 20.sp,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = settingsSectionDescription(selectedSection),
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        CloseButton(
+            onClick = onClose,
+            modifier = Modifier.size(46.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsSidebar(
+    selectedSection: SettingsSection,
+    onSelectedSectionChange: (SettingsSection) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val currentScreenName = screenNameForDisplayId(LocalView.current.display?.displayId)
+
+    Column(
+        modifier = modifier
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 12.dp, vertical = 18.dp)
+    ) {
+        Text(
+            text = "Settings",
+            color = PrimaryText,
+            fontSize = 22.sp,
+            lineHeight = 22.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SettingsSection.entries.forEach { section ->
+            SettingsSidebarButton(
+                text = section.label,
+                imageVector = section.icon,
+                selected = selectedSection == section,
+                onClick = { onSelectedSectionChange(section) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "v${BuildConfig.VERSION_NAME}  |  App is open on: $currentScreenName",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsSidebarButton(
+    text: String,
+    imageVector: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            selected -> ActiveRowBackground
+            isPressed -> ActiveRowBackground.copy(alpha = 0.65f)
+            else -> RowBlack
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "settingsSidebarBackground"
+    )
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(
+                width = if (selected) 1.dp else 0.5.dp,
+                color = if (selected) PrimaryText else DividerColor
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
+            )
+            .padding(horizontal = 12.dp)
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = null,
+            tint = if (selected) PrimaryText else SecondaryText,
+            modifier = Modifier.size(21.dp)
+        )
+        Spacer(modifier = Modifier.width(11.dp))
+        Text(
+            text = text,
+            color = if (selected) PrimaryText else SecondaryText,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun PresetViewTabs(
+    selectedView: PresetSettingsView,
+    onSelectedViewChange: (PresetSettingsView) -> Unit
+) {
+    SettingsTwoWayTabs(
+        firstText = "Create",
+        secondText = "Edit",
+        firstSelected = selectedView == PresetSettingsView.Create,
+        onFirstClick = { onSelectedViewChange(PresetSettingsView.Create) },
+        onSecondClick = { onSelectedViewChange(PresetSettingsView.Edit) }
+    )
+}
+
+@Composable
+private fun RunsViewTabs(
+    selectedView: RunsSettingsView,
+    onSelectedViewChange: (RunsSettingsView) -> Unit
+) {
+    SettingsTwoWayTabs(
+        firstText = "Records",
+        secondText = "History",
+        firstSelected = selectedView == RunsSettingsView.Records,
+        onFirstClick = { onSelectedViewChange(RunsSettingsView.Records) },
+        onSecondClick = { onSelectedViewChange(RunsSettingsView.History) }
+    )
+}
+
+@Composable
+private fun recordingSliderColors() = SliderDefaults.colors(
+    thumbColor = SuccessGreen,
+    activeTrackColor = SuccessGreen,
+    activeTickColor = SuccessGreen,
+    inactiveTrackColor = DividerColor,
+    inactiveTickColor = DividerColor
+)
+
+@Composable
+private fun SettingsTwoWayTabs(
+    firstText: String,
+    secondText: String,
+    firstSelected: Boolean,
+    onFirstClick: () -> Unit,
+    onSecondClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -3613,43 +4418,324 @@ private fun SettingsModeTabs(
             .padding(4.dp)
     ) {
         SettingsTabButton(
-            text = "Create",
-            selected = selectedTab == PresetSettingsTab.Create,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Create) },
-            fontSize = 12.sp,
+            text = firstText,
+            selected = firstSelected,
+            onClick = onFirstClick,
             modifier = Modifier.weight(1f)
         )
         Spacer(modifier = Modifier.width(6.dp))
         SettingsTabButton(
-            text = "Edit",
-            selected = selectedTab == PresetSettingsTab.Edit,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Edit) },
-            fontSize = 12.sp,
+            text = secondText,
+            selected = !firstSelected,
+            onClick = onSecondClick,
             modifier = Modifier.weight(1f)
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "Records",
-            selected = selectedTab == PresetSettingsTab.Records,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Records) },
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
+    }
+}
+
+@Composable
+private fun RecordingSettingsPanel(
+    recordingFolderUri: String?,
+    availableRecordingResolutions: List<RecordingResolution>,
+    recordingResolution: RecordingResolution,
+    recordingBitrateMbps: Int,
+    recordAudioEnabled: Boolean,
+    recordOppositeScreenEnabled: Boolean,
+    onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onRecordingResolutionChange: (RecordingResolution) -> Unit,
+    onRecordingBitrateChange: (Int) -> Unit,
+    onRecordAudioChange: (Boolean) -> Unit,
+    onChooseFolder: () -> Unit,
+    onUseDefaultFolder: () -> Unit
+) {
+    val usesCustomFolder = !recordingFolderUri.isNullOrBlank()
+    val currentDisplayId = LocalView.current.display?.displayId
+    val captureTargetLabel = when (currentDisplayId) {
+        null -> "Capture target: Internal screen"
+        InternalDisplayId -> "Capture target: Internal screen (same screen)"
+        else -> "Capture target: Internal screen (opposite screen)"
+    }
+
+    SettingsSectionTitle("Capture", Icons.Filled.PlayArrow)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Record runs on opposite screen",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = captureTargetLabel,
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1
+            )
+        }
+        SettingsSwitch(
+            checked = recordOppositeScreenEnabled,
+            onCheckedChange = onRecordOppositeScreenChange
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "History",
-            selected = selectedTab == PresetSettingsTab.History,
-            onClick = { onSelectedTabChange(PresetSettingsTab.History) },
+    }
+    Text(
+        text = "Recording starts with the run and ends 3 seconds after finish or reset. Android requires capture approval for each run.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    if (currentDisplayId == InternalDisplayId) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Android can auto-capture only the internal display. For true opposite-screen capture, open this app on the external screen.",
+            color = GoldSplit,
             fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
+            lineHeight = 15.sp
         )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "Backup",
-            selected = selectedTab == PresetSettingsTab.Backup,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Backup) },
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Record internal audio",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Device playback only; microphone input is not recorded",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = recordAudioEnabled,
+            onCheckedChange = onRecordAudioChange
+        )
+    }
+    Text(
+        text = "Android may label the required permission as microphone access. The app uses playback capture for the internal display instead.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(modifier = Modifier.height(18.dp))
+
+    SettingsSectionTitle("Video Quality", Icons.Filled.Settings)
+    Text(
+        text = "Resolution: ${recordingResolution.label}",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = availableRecordingResolutions
+            .indexOf(recordingResolution)
+            .coerceAtLeast(0)
+            .toFloat(),
+        onValueChange = { value ->
+            availableRecordingResolutions
+                .getOrNull(value.roundToInt())
+                ?.let(onRecordingResolutionChange)
+        },
+        valueRange = 0f..(availableRecordingResolutions.lastIndex).toFloat(),
+        steps = (availableRecordingResolutions.size - 2).coerceAtLeast(0),
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = availableRecordingResolutions.first().label,
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = availableRecordingResolutions.last().label,
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "Bitrate: ${recordingBitrateMbps} Mbps",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = recordingBitrateMbps.toFloat(),
+        onValueChange = { onRecordingBitrateChange(it.roundToInt()) },
+        valueRange = MinRecordingBitrateMbps.toFloat()..MaxRecordingBitrateMbps.toFloat(),
+        steps = 13,
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${MinRecordingBitrateMbps} Mbps",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "${MaxRecordingBitrateMbps} Mbps",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "These controls apply to the next recording and are independent of each other.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "Lower resolution or bitrate saves storage space but reduces video quality.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    Spacer(modifier = Modifier.height(18.dp))
+
+    SettingsSectionTitle("Recording Location", Icons.Filled.PlayArrow)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(14.dp)
+    ) {
+        Text(
+            text = if (usesCustomFolder) "Custom folder" else "Default app storage",
+            color = PrimaryText,
+            fontSize = 16.sp,
+            lineHeight = 16.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = recordingFolderLabel(recordingFolderUri),
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 16.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    Row(modifier = Modifier.fillMaxWidth()) {
+        PanelTextButton(
+            text = "USE APP STORAGE",
+            onClick = onUseDefaultFolder,
+            enabled = usesCustomFolder,
+            imageVector = Icons.Filled.Refresh,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = "CHOOSE FOLDER",
+            onClick = onChooseFolder,
+            imageVector = Icons.AutoMirrored.Filled.List,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+    Text(
+        text = "Completed MP4 recordings are saved to this location.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+}
+
+@Composable
+private fun AboutSettingsPanel(
+    updateCheckState: UpdateCheckState,
+    onOpenRelease: (String) -> Unit
+) {
+    val currentScreenName = screenNameForDisplayId(LocalView.current.display?.displayId)
+
+    SettingsSectionTitle("Thor Speedrun Splits", Icons.Filled.Info)
+    Text(
+        text = "Version ${BuildConfig.VERSION_NAME}",
+        color = PrimaryText,
+        fontSize = 16.sp,
+        lineHeight = 16.sp,
+        maxLines = 1
+    )
+    Spacer(modifier = Modifier.height(10.dp))
+    UpdateCheckRow(
+        updateCheckState = updateCheckState,
+        onOpenRelease = onOpenRelease
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "App is open on: $currentScreenName",
+        color = PrimaryText,
+        fontSize = 14.sp,
+        lineHeight = 14.sp,
+        maxLines = 1
+    )
+    Spacer(modifier = Modifier.height(18.dp))
+    Text(
+        text = "A LiveSplit-inspired timer designed for dual-screen Android handhelds.",
+        color = SecondaryText,
+        fontSize = 14.sp,
+        lineHeight = 18.sp
+    )
+    Spacer(modifier = Modifier.height(20.dp))
+    Text(
+        text = "View GitHub Repository",
+        color = LinkBlue,
+        fontSize = 14.sp,
+        lineHeight = 14.sp,
+        fontFamily = FontFamily.Default,
+        textDecoration = TextDecoration.Underline,
+        modifier = Modifier.clickable { onOpenRelease(GitHubRepositoryUrl) }
+    )
+    Spacer(modifier = Modifier.height(14.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "Made by ",
+            color = SecondaryText,
+            fontSize = 14.sp,
+            lineHeight = 14.sp
+        )
+        Text(
+            text = "Jonathan Gallo",
+            color = LinkBlue,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            fontFamily = FontFamily.Default,
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable { onOpenRelease(CreatorWebsiteUrl) }
         )
     }
 }
@@ -3726,10 +4812,9 @@ private fun ThemeModeToggle(
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
-            PanelTextButton(
-                text = if (useSystemTheme) "ON" else "OFF",
-                onClick = { onUseSystemThemeChange(!useSystemTheme) },
-                modifier = Modifier.size(width = 76.dp, height = 34.dp)
+            SettingsSwitch(
+                checked = useSystemTheme,
+                onCheckedChange = onUseSystemThemeChange
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -3758,6 +4843,64 @@ private fun ThemeModeToggle(
             }
         }
     }
+}
+
+@Composable
+private fun OledScreenShiftToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "OLED Screen Shift",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Moves the interface slightly every 30 seconds",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun SettingsSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val vibrate = rememberButtonVibration()
+    Switch(
+        checked = checked,
+        onCheckedChange = { enabled ->
+            vibrate()
+            onCheckedChange(enabled)
+        },
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = OledBlack,
+            checkedTrackColor = SuccessGreen,
+            checkedBorderColor = SuccessGreen,
+            uncheckedThumbColor = SecondaryText,
+            uncheckedTrackColor = RowBlack,
+            uncheckedBorderColor = DividerColor
+        )
+    )
 }
 
 @Composable
@@ -3860,14 +5003,28 @@ private fun SettingsTabButton(
 }
 
 @Composable
-private fun SettingsSectionTitle(text: String) {
-    Text(
-        text = text,
-        color = SecondaryText,
-        fontSize = 16.sp,
-        lineHeight = 16.sp,
-        maxLines = 1
-    )
+private fun SettingsSectionTitle(
+    text: String,
+    imageVector: ImageVector? = null
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (imageVector != null) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = null,
+                tint = SecondaryText,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(
+            text = text,
+            color = SecondaryText,
+            fontSize = 16.sp,
+            lineHeight = 16.sp,
+            maxLines = 1
+        )
+    }
     Spacer(modifier = Modifier.height(8.dp))
 }
 
@@ -4102,6 +5259,7 @@ private fun PanelTextButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    imageVector: ImageVector? = null,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -4126,8 +5284,9 @@ private fun PanelTextButton(
         label = "panelButtonBorder"
     )
 
-    Box(
-        contentAlignment = Alignment.Center,
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .background(backgroundColor)
             .border(width = 1.5.dp, color = borderColor)
@@ -4142,6 +5301,15 @@ private fun PanelTextButton(
             )
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
+        if (imageVector != null) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = null,
+                tint = if (enabled) PrimaryText else SecondaryText,
+                modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+        }
         FadingButtonText(
             text = text,
             color = if (enabled) PrimaryText else SecondaryText,
