@@ -12,11 +12,13 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -124,14 +126,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.FileProvider
 import androidx.room.withTransaction
 import com.example.thorspeedrunsplits.ui.theme.ThorSpeedrunSplitsTheme
 import java.util.Date
+import java.io.File
 import java.util.Locale
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import kotlin.math.roundToInt
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -147,6 +152,16 @@ private data class DraftSplitSegment(
     val id: Int,
     val name: String,
     val markerColor: Color
+)
+
+private data class RunRecordingLink(
+    val uri: Uri
+)
+
+private data class RecordingFileCandidate(
+    val name: String,
+    val uri: Uri,
+    val lastModifiedMillis: Long
 )
 
 private data class SplitPreset(
@@ -308,6 +323,104 @@ private fun recordingFolderLabel(folderUri: String?): String {
         val path = documentId.substringAfter(':', "").trim('/')
         if (path.isBlank()) "Selected storage root" else path.substringAfterLast('/')
     }.getOrDefault("Selected custom folder")
+}
+
+private fun findRunRecordingLinks(
+    context: Context,
+    recordingFolderUri: String?,
+    runs: List<HistoricalRun>
+): Map<Long, RunRecordingLink> {
+    val candidates = if (recordingFolderUri.isNullOrBlank()) {
+        val recordingsDirectory = File(
+            context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
+            "Run Recordings"
+        )
+        recordingsDirectory.listFiles().orEmpty().mapNotNull { file ->
+            if (!file.isFile || !file.name.endsWith(".mp4", ignoreCase = true)) {
+                null
+            } else {
+                runCatching {
+                    RecordingFileCandidate(
+                        name = file.name,
+                        uri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        ),
+                        lastModifiedMillis = file.lastModified()
+                    )
+                }.getOrNull()
+            }
+        }
+    } else {
+        val treeUri = Uri.parse(recordingFolderUri)
+        runCatching {
+            val resolver = context.contentResolver
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            )
+            resolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    OpenableColumns.DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                ),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                buildList {
+                    val documentIdIndex = cursor.getColumnIndexOrThrow(
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                    )
+                    val displayNameIndex = cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
+                    val modifiedIndex = cursor.getColumnIndex(
+                        DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                    )
+                    while (cursor.moveToNext()) {
+                        val displayName = cursor.getString(displayNameIndex)
+                        if (displayName.endsWith(".mp4", ignoreCase = true)) {
+                            add(
+                                RecordingFileCandidate(
+                                    name = displayName,
+                                    uri = DocumentsContract.buildDocumentUriUsingTree(
+                                        treeUri,
+                                        cursor.getString(documentIdIndex)
+                                    ),
+                                    lastModifiedMillis = if (modifiedIndex >= 0 &&
+                                        !cursor.isNull(modifiedIndex)
+                                    ) {
+                                        cursor.getLong(modifiedIndex)
+                                    } else {
+                                        0L
+                                    }
+                                )
+                            )
+                        }
+                    }
+                }
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+    }.toMutableList()
+
+    return buildMap {
+        runs.sortedByDescending { it.completedAtMillis }.forEach { run ->
+            val fileNamePrefix = recordingFileNamePrefix(
+                gameName = run.gameTitle,
+                category = run.category,
+                runLengthMillis = run.finalTimeMillis
+            ) + "_"
+            val match = candidates
+                .filter { it.name.startsWith(fileNamePrefix) }
+                .minByOrNull { abs(it.lastModifiedMillis - run.completedAtMillis) }
+            if (match != null) {
+                put(run.id, RunRecordingLink(match.uri))
+                candidates.remove(match)
+            }
+        }
+    }
 }
 
 private fun MediaProjectionManager.internalDisplayCaptureIntent(): Intent {
@@ -1068,6 +1181,8 @@ private fun ThorSpeedrunSplitsApp() {
     var backupExportState by remember { mutableStateOf<BackupExportState>(BackupExportState.Idle) }
     var backupImportState by remember { mutableStateOf<BackupImportState>(BackupImportState.Idle) }
     var pendingBackupBundle by remember { mutableStateOf<BackupBundle?>(null) }
+    var recordingFilesRefresh by remember { mutableStateOf(0) }
+    val recordingLinksByRunId = remember { mutableStateMapOf<Long, RunRecordingLink>() }
     val mediaProjectionManager = remember {
         appContext.getSystemService(MediaProjectionManager::class.java)
     }
@@ -1075,15 +1190,23 @@ private fun ThorSpeedrunSplitsApp() {
     DisposableEffect(appContext) {
         val recordingStateReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == RunRecordingService.ACTION_RECORDING_STATE) {
-                    recordingSessionActive = intent.getBooleanExtra(
-                        RunRecordingService.EXTRA_RECORDING_ACTIVE,
-                        false
-                    )
+                when (intent?.action) {
+                    RunRecordingService.ACTION_RECORDING_STATE -> {
+                        recordingSessionActive = intent.getBooleanExtra(
+                            RunRecordingService.EXTRA_RECORDING_ACTIVE,
+                            false
+                        )
+                    }
+                    RunRecordingService.ACTION_RECORDING_FINALIZED -> {
+                        recordingFilesRefresh += 1
+                    }
                 }
             }
         }
-        val filter = IntentFilter(RunRecordingService.ACTION_RECORDING_STATE)
+        val filter = IntentFilter().apply {
+            addAction(RunRecordingService.ACTION_RECORDING_STATE)
+            addAction(RunRecordingService.ACTION_RECORDING_FINALIZED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             appContext.registerReceiver(
                 recordingStateReceiver,
@@ -1660,6 +1783,35 @@ private fun ThorSpeedrunSplitsApp() {
         0L
     }
     val displayedTotalTimeMillis = activePresetStats.totalTimeMillis + liveUnpersistedRunMillis
+    val activeRunHistory = completedRunHistory[activePreset.presetName].orEmpty()
+    LaunchedEffect(
+        activePreset.presetName,
+        activeRunHistory,
+        recordingFolderUri,
+        recordingFilesRefresh
+    ) {
+        val links = withContext(Dispatchers.IO) {
+            findRunRecordingLinks(
+                context = appContext,
+                recordingFolderUri = recordingFolderUri,
+                runs = activeRunHistory
+            )
+        }
+        recordingLinksByRunId.clear()
+        recordingLinksByRunId.putAll(links)
+    }
+    fun openRunRecording(link: RunRecordingLink) {
+        runCatching {
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(link.uri, "video/mp4")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            appContext.startActivity(
+                Intent.createChooser(viewIntent, "Open run recording")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
     val oledScreenShift = OledScreenShiftPattern[oledScreenShiftIndex]
 
     Box(
@@ -1977,7 +2129,9 @@ private fun ThorSpeedrunSplitsApp() {
                     activePreset = activePreset,
                     activePersonalBest = savedRuns[activePreset.presetName],
                     activeBestSegments = savedBestSegments[activePreset.presetName],
-                    activeRunHistory = completedRunHistory[activePreset.presetName].orEmpty(),
+                    activeRunHistory = activeRunHistory,
+                    recordingLinksByRunId = recordingLinksByRunId,
+                    onOpenRunRecording = ::openRunRecording,
                     backupExportState = backupExportState,
                     backupImportState = backupImportState,
                     selectedThemeMode = selectedThemeMode,
@@ -3231,6 +3385,8 @@ private fun SettingsPanel(
     activePersonalBest: Run?,
     activeBestSegments: BestSegments?,
     activeRunHistory: List<HistoricalRun>,
+    recordingLinksByRunId: Map<Long, RunRecordingLink>,
+    onOpenRunRecording: (RunRecordingLink) -> Unit,
     backupExportState: BackupExportState,
     backupImportState: BackupImportState,
     selectedThemeMode: AppThemeMode,
@@ -3632,6 +3788,8 @@ private fun SettingsPanel(
                     ) { _, run ->
                         HistoricalRunRow(
                             run = run,
+                            recordingLink = recordingLinksByRunId[run.id],
+                            onOpenRecording = onOpenRunRecording,
                             onOpenDetails = { selectedHistoricalRunId = run.id }
                         )
                     }
@@ -4003,6 +4161,8 @@ private fun HistoryHeader(
 @Composable
 private fun HistoricalRunRow(
     run: HistoricalRun,
+    recordingLink: RunRecordingLink?,
+    onOpenRecording: (RunRecordingLink) -> Unit,
     onOpenDetails: () -> Unit
 ) {
     Row(
@@ -4053,11 +4213,30 @@ private fun HistoricalRunRow(
             modifier = Modifier.width(74.dp)
         )
         Spacer(modifier = Modifier.width(10.dp))
+        if (recordingLink != null) {
+            PanelTextButton(
+                text = "VIEW RUN",
+                onClick = { onOpenRecording(recordingLink) },
+                imageVector = Icons.Filled.PlayArrow,
+                modifier = Modifier.size(width = 94.dp, height = 36.dp)
+            )
+        } else {
+            Text(
+                text = "NO VIDEO",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 11.sp,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(94.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
         PanelTextButton(
             text = "DETAILS",
             onClick = onOpenDetails,
             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-            modifier = Modifier.size(width = 100.dp, height = 36.dp)
+            modifier = Modifier.size(width = 88.dp, height = 36.dp)
         )
     }
     Spacer(modifier = Modifier.height(6.dp))

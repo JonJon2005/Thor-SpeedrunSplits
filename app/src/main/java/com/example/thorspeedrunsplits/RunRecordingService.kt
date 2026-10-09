@@ -324,6 +324,7 @@ class RunRecordingService : Service() {
             } finally {
                 mainHandler.post {
                     pendingFinalizations -= 1
+                    broadcastRecordingFinalized()
                     if (
                         stopService &&
                         pendingFinalizations == 0 &&
@@ -597,9 +598,19 @@ class RunRecordingService : Service() {
         )
     }
 
+    private fun broadcastRecordingFinalized() {
+        sendBroadcast(
+            Intent(ACTION_RECORDING_FINALIZED).apply {
+                setPackage(packageName)
+            }
+        )
+    }
+
     companion object {
         const val ACTION_RECORDING_STATE =
             "com.example.thorspeedrunsplits.RECORDING_STATE"
+        const val ACTION_RECORDING_FINALIZED =
+            "com.example.thorspeedrunsplits.RECORDING_FINALIZED"
         const val EXTRA_RECORDING_ACTIVE = "recording_active"
         @Volatile
         var isRecording: Boolean = false
@@ -1029,7 +1040,7 @@ private class PlaybackAudioCapture(
     }
 }
 
-private fun buildRecordingFileName(
+internal fun buildRecordingFileName(
     gameName: String,
     category: String,
     runLengthMillis: Long,
@@ -1037,12 +1048,19 @@ private fun buildRecordingFileName(
 ): String {
     val date = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US)
         .format(Date(completedAtMillis))
+    return recordingFileNamePrefix(gameName, category, runLengthMillis) + "_$date.mp4"
+}
+
+internal fun recordingFileNamePrefix(
+    gameName: String,
+    category: String,
+    runLengthMillis: Long
+): String {
     return listOf(
         gameName.safeFileNamePart(),
         category.safeFileNamePart(),
-        runLengthMillis.fileNameDuration(),
-        date
-    ).joinToString("_") + ".mp4"
+        runLengthMillis.fileNameDuration()
+    ).joinToString("_")
 }
 
 private fun String.safeFileNamePart(): String {
