@@ -174,7 +174,7 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.6"` and `versionCode = 8`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.6.1"` and `versionCode = 9`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
@@ -333,7 +333,17 @@ Change Log
 - 2026-10-09: Implemented run-linked MP4 screen recording: capture starts when a run starts, stops three seconds after finish/reset, uses the preset game/category plus run length and completion date in the filename, and writes to the configured app-storage or custom SAF folder. Android MediaProjection captures the internal/default display, so true opposite-screen capture requires the timer app to run on the external display.
 - 2026-10-09: Added a slow-flashing red recording indicator beside the home Settings button, synchronized to the recording service so it remains visible through the three-second post-run tail and clears after capture stops.
 - 2026-10-09: Updated the independent persisted recording sliders to use common 240p, 480p, 720p, and 1080p resolutions plus video bitrate (2–16 Mbps); both values are applied directly to the MediaProjection/MediaRecorder pipeline for the next run.
-- 2026-10-09: Recording quality guidance now covers resolution and bitrate; recordings remain fixed at the default 60 FPS until a frame-rate setting is intentionally added later.
+- 2026-10-09: Recording quality guidance covers resolution, bitrate, and frame rate; recordings offer a persisted 30 FPS or 60 FPS setting applied directly to the capture encoder for the next run.
 - 2026-10-09: Added an optional recording-audio toggle that requests Android playback-capture permission (not microphone input), captures matching internal-display media/game playback with AudioRecord, and muxes AAC audio into the recorded MP4 when the run ends.
 - 2026-10-09: Replaced the prior README screenshots with 11 labeled captures from the current build and refreshed the README feature summary to match the complete app feature set; the store icon was retained.
 - [APK] v0.6 released
+- 2026-10-09: Created the `v0.6.1` development branch from `main`, incremented the Android version code from 8 to 9, and set the user-visible version name to 0.6.1.
+- 2026-10-09: Added a persisted recording frame-rate slider with 30 FPS and 60 FPS options; the selected value is sent to a surface-input MediaCodec encoder, which uses Android's maximum-input-FPS cap to drop excess display frames before encoding.
+- 2026-10-09: Fixed duplicate split-name crashes by using each split row's position as its LazyColumn key rather than the editable split name; duplicate names are now valid preset data.
+- 2026-10-09: Added a persisted, default-off `Save only completed run recordings` toggle; when enabled, resets and interrupted captures are discarded while completed runs continue to save normally.
+- 2026-10-09: Added a persisted, default-on `Require Hold to Reset` Customization toggle; RESET now fills left-to-right during a 0.5-second hold before resetting, while disabling the toggle restores tap-to-reset behavior.
+- 2026-10-09: Added a persisted, default-off `Invert Bottom Layout` Customization toggle that mirrors the bottom controls, placing timer/stats at left and split/undo/reset controls at right.
+- 2026-10-09: Moved recording finalization, including audio/video remuxing and output copying, onto an IO coroutine; the foreground service remains alive until finalization completes while main-thread capture cleanup and UI recording-state updates remain immediate.
+- 2026-10-09: Added a live home-screen current-segment timer alongside the overall timer; it resets on each split, follows undo changes, and retains the final segment duration after a completed run.
+- 2026-10-09: Linked completed-run history to matching MP4 files in the active recording location using the stable game/category/run-duration filename prefix; history rows now show `VIEW RUN` when a video is found or `NO VIDEO` otherwise, opening the file through Android's external viewer.
+- [APK] v0.6.1 released

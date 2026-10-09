@@ -12,11 +12,13 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -25,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -48,6 +51,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -122,14 +126,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.FileProvider
 import androidx.room.withTransaction
 import com.example.thorspeedrunsplits.ui.theme.ThorSpeedrunSplitsTheme
 import java.util.Date
+import java.io.File
 import java.util.Locale
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import kotlin.math.roundToInt
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -145,6 +152,16 @@ private data class DraftSplitSegment(
     val id: Int,
     val name: String,
     val markerColor: Color
+)
+
+private data class RunRecordingLink(
+    val uri: Uri
+)
+
+private data class RecordingFileCandidate(
+    val name: String,
+    val uri: Uri,
+    val lastModifiedMillis: Long
 )
 
 private data class SplitPreset(
@@ -257,15 +274,22 @@ private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
+private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
+private const val InvertBottomLayoutPreferenceKey = "invert_bottom_layout"
 private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
 private const val RecordAudioPreferenceKey = "record_audio"
+private const val SaveCompletedRunRecordingsPreferenceKey = "save_completed_run_recordings"
 private const val RecordingResolutionPreferenceKey = "recording_resolution"
 private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
+private const val RecordingFrameRatePreferenceKey = "recording_frame_rate"
 private const val DefaultRecordingBitrateMbps = 10
 private const val MinRecordingBitrateMbps = 2
 private const val MaxRecordingBitrateMbps = 16
+private const val DefaultRecordingFrameRate = 60
+private const val LowerRecordingFrameRate = 30
+private const val ResetHoldDurationMillis = 500
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
@@ -299,6 +323,104 @@ private fun recordingFolderLabel(folderUri: String?): String {
         val path = documentId.substringAfter(':', "").trim('/')
         if (path.isBlank()) "Selected storage root" else path.substringAfterLast('/')
     }.getOrDefault("Selected custom folder")
+}
+
+private fun findRunRecordingLinks(
+    context: Context,
+    recordingFolderUri: String?,
+    runs: List<HistoricalRun>
+): Map<Long, RunRecordingLink> {
+    val candidates = if (recordingFolderUri.isNullOrBlank()) {
+        val recordingsDirectory = File(
+            context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
+            "Run Recordings"
+        )
+        recordingsDirectory.listFiles().orEmpty().mapNotNull { file ->
+            if (!file.isFile || !file.name.endsWith(".mp4", ignoreCase = true)) {
+                null
+            } else {
+                runCatching {
+                    RecordingFileCandidate(
+                        name = file.name,
+                        uri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        ),
+                        lastModifiedMillis = file.lastModified()
+                    )
+                }.getOrNull()
+            }
+        }
+    } else {
+        val treeUri = Uri.parse(recordingFolderUri)
+        runCatching {
+            val resolver = context.contentResolver
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            )
+            resolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    OpenableColumns.DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                ),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                buildList {
+                    val documentIdIndex = cursor.getColumnIndexOrThrow(
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                    )
+                    val displayNameIndex = cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
+                    val modifiedIndex = cursor.getColumnIndex(
+                        DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                    )
+                    while (cursor.moveToNext()) {
+                        val displayName = cursor.getString(displayNameIndex)
+                        if (displayName.endsWith(".mp4", ignoreCase = true)) {
+                            add(
+                                RecordingFileCandidate(
+                                    name = displayName,
+                                    uri = DocumentsContract.buildDocumentUriUsingTree(
+                                        treeUri,
+                                        cursor.getString(documentIdIndex)
+                                    ),
+                                    lastModifiedMillis = if (modifiedIndex >= 0 &&
+                                        !cursor.isNull(modifiedIndex)
+                                    ) {
+                                        cursor.getLong(modifiedIndex)
+                                    } else {
+                                        0L
+                                    }
+                                )
+                            )
+                        }
+                    }
+                }
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+    }.toMutableList()
+
+    return buildMap {
+        runs.sortedByDescending { it.completedAtMillis }.forEach { run ->
+            val fileNamePrefix = recordingFileNamePrefix(
+                gameName = run.gameTitle,
+                category = run.category,
+                runLengthMillis = run.finalTimeMillis
+            ) + "_"
+            val match = candidates
+                .filter { it.name.startsWith(fileNamePrefix) }
+                .minByOrNull { abs(it.lastModifiedMillis - run.completedAtMillis) }
+            if (match != null) {
+                put(run.id, RunRecordingLink(match.uri))
+                candidates.remove(match)
+            }
+        }
+    }
 }
 
 private fun MediaProjectionManager.internalDisplayCaptureIntent(): Intent {
@@ -997,6 +1119,8 @@ private fun ThorSpeedrunSplitsApp() {
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
     var oledScreenShiftEnabled by remember { mutableStateOf(false) }
+    var requireHoldToReset by remember { mutableStateOf(true) }
+    var invertBottomLayout by remember { mutableStateOf(false) }
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
@@ -1004,8 +1128,10 @@ private fun ThorSpeedrunSplitsApp() {
     var recordingFolderUri by remember { mutableStateOf<String?>(null) }
     var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
     var recordAudioEnabled by remember { mutableStateOf(false) }
+    var saveCompletedRunRecordingsOnly by remember { mutableStateOf(false) }
     var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
     var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
+    var recordingFrameRate by remember { mutableStateOf(DefaultRecordingFrameRate) }
     var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
     var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
     var recordingSessionActive by remember { mutableStateOf(RunRecordingService.isRecording) }
@@ -1055,6 +1181,8 @@ private fun ThorSpeedrunSplitsApp() {
     var backupExportState by remember { mutableStateOf<BackupExportState>(BackupExportState.Idle) }
     var backupImportState by remember { mutableStateOf<BackupImportState>(BackupImportState.Idle) }
     var pendingBackupBundle by remember { mutableStateOf<BackupBundle?>(null) }
+    var recordingFilesRefresh by remember { mutableStateOf(0) }
+    val recordingLinksByRunId = remember { mutableStateMapOf<Long, RunRecordingLink>() }
     val mediaProjectionManager = remember {
         appContext.getSystemService(MediaProjectionManager::class.java)
     }
@@ -1062,15 +1190,23 @@ private fun ThorSpeedrunSplitsApp() {
     DisposableEffect(appContext) {
         val recordingStateReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == RunRecordingService.ACTION_RECORDING_STATE) {
-                    recordingSessionActive = intent.getBooleanExtra(
-                        RunRecordingService.EXTRA_RECORDING_ACTIVE,
-                        false
-                    )
+                when (intent?.action) {
+                    RunRecordingService.ACTION_RECORDING_STATE -> {
+                        recordingSessionActive = intent.getBooleanExtra(
+                            RunRecordingService.EXTRA_RECORDING_ACTIVE,
+                            false
+                        )
+                    }
+                    RunRecordingService.ACTION_RECORDING_FINALIZED -> {
+                        recordingFilesRefresh += 1
+                    }
                 }
             }
         }
-        val filter = IntentFilter(RunRecordingService.ACTION_RECORDING_STATE)
+        val filter = IntentFilter().apply {
+            addAction(RunRecordingService.ACTION_RECORDING_STATE)
+            addAction(RunRecordingService.ACTION_RECORDING_FINALIZED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             appContext.registerReceiver(
                 recordingStateReceiver,
@@ -1111,7 +1247,9 @@ private fun ThorSpeedrunSplitsApp() {
                 resolutionWidth = selectedResolution.width,
                 resolutionHeight = selectedResolution.height,
                 bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000,
-                recordAudio = recordAudioEnabled
+                frameRate = recordingFrameRate,
+                recordAudio = recordAudioEnabled,
+                saveOnlyCompletedRuns = saveCompletedRunRecordingsOnly
             )
             recordingSessionActive = true
             screenCaptureConsent = null
@@ -1125,9 +1263,13 @@ private fun ThorSpeedrunSplitsApp() {
         }
     }
 
-    fun stopRunRecording(runLengthMillis: Long) {
+    fun stopRunRecording(runLengthMillis: Long, saveRecording: Boolean = true) {
         if (!recordingSessionActive) return
-        RunRecordingService.stop(appContext, runLengthMillis)
+        RunRecordingService.stop(
+            context = appContext,
+            runLengthMillis = runLengthMillis,
+            saveRecording = saveRecording
+        )
     }
 
     val screenCaptureConsentLauncher = rememberLauncherForActivityResult(
@@ -1227,7 +1369,10 @@ private fun ThorSpeedrunSplitsApp() {
             } else {
                 finishedElapsedMillis
             }
-            stopRunRecording(runLengthMillis)
+            stopRunRecording(
+                runLengthMillis = runLengthMillis,
+                saveRecording = !saveCompletedRunRecordingsOnly
+            )
         }
         isRunning = false
         isFinished = false
@@ -1481,6 +1626,10 @@ private fun ThorSpeedrunSplitsApp() {
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
         oledScreenShiftEnabled =
             appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
+        requireHoldToReset =
+            appPreferenceDao.getValue(RequireHoldToResetPreferenceKey) != "false"
+        invertBottomLayout =
+            appPreferenceDao.getValue(InvertBottomLayoutPreferenceKey) == "true"
         recordingFolderUri = appPreferenceDao.getValue(RecordingFolderPreferenceKey)
             ?.takeIf { it.isNotBlank() }
         recordOppositeScreenEnabled =
@@ -1489,6 +1638,8 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(RecordAudioPreferenceKey) == "true" &&
                 appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
+        saveCompletedRunRecordingsOnly =
+            appPreferenceDao.getValue(SaveCompletedRunRecordingsPreferenceKey) == "true"
         val savedResolution = appPreferenceDao
             .getValue(RecordingResolutionPreferenceKey)
             ?.split('x')
@@ -1510,6 +1661,11 @@ private fun ThorSpeedrunSplitsApp() {
             ?.toIntOrNull()
             ?.coerceIn(MinRecordingBitrateMbps, MaxRecordingBitrateMbps)
             ?: DefaultRecordingBitrateMbps
+        recordingFrameRate = appPreferenceDao
+            .getValue(RecordingFrameRatePreferenceKey)
+            ?.toIntOrNull()
+            ?.takeIf { it == LowerRecordingFrameRate || it == DefaultRecordingFrameRate }
+            ?: DefaultRecordingFrameRate
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -1570,6 +1726,12 @@ private fun ThorSpeedrunSplitsApp() {
         isFinished -> finishedElapsedMillis
         else -> 0L
     }
+    val currentSegmentElapsedMillis = when {
+        isRunning -> elapsedMillis - (completedTimes.getOrNull(activeSplitIndex - 1) ?: 0L)
+        isFinished -> finishedElapsedMillis -
+            (completedTimes.getOrNull(activePreset.segments.lastIndex - 1) ?: 0L)
+        else -> 0L
+    }.coerceAtLeast(0L)
     val savedRunForActivePreset = savedRuns[activePreset.presetName]
         ?.takeIf { it.splitTimes.size == activePreset.segments.size }
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
@@ -1621,6 +1783,35 @@ private fun ThorSpeedrunSplitsApp() {
         0L
     }
     val displayedTotalTimeMillis = activePresetStats.totalTimeMillis + liveUnpersistedRunMillis
+    val activeRunHistory = completedRunHistory[activePreset.presetName].orEmpty()
+    LaunchedEffect(
+        activePreset.presetName,
+        activeRunHistory,
+        recordingFolderUri,
+        recordingFilesRefresh
+    ) {
+        val links = withContext(Dispatchers.IO) {
+            findRunRecordingLinks(
+                context = appContext,
+                recordingFolderUri = recordingFolderUri,
+                runs = activeRunHistory
+            )
+        }
+        recordingLinksByRunId.clear()
+        recordingLinksByRunId.putAll(links)
+    }
+    fun openRunRecording(link: RunRecordingLink) {
+        runCatching {
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(link.uri, "video/mp4")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            appContext.startActivity(
+                Intent.createChooser(viewIntent, "Open run recording")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
     val oledScreenShift = OledScreenShiftPattern[oledScreenShiftIndex]
 
     Box(
@@ -1689,10 +1880,13 @@ private fun ThorSpeedrunSplitsApp() {
                     showResetButton = isRunning,
                     showUndoButton = isRunning,
                     undoButtonEnabled = isRunning && activeSplitIndex > 0,
+                    requireHoldToReset = requireHoldToReset,
+                    invertBottomLayout = invertBottomLayout,
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
                     timerText = formatSeconds(elapsedMillis),
+                    segmentTimerText = formatSeconds(currentSegmentElapsedMillis),
                     timerColor = timerTextColor,
                     timerSize = timerSize,
                     modifier = Modifier
@@ -1935,13 +2129,17 @@ private fun ThorSpeedrunSplitsApp() {
                     activePreset = activePreset,
                     activePersonalBest = savedRuns[activePreset.presetName],
                     activeBestSegments = savedBestSegments[activePreset.presetName],
-                    activeRunHistory = completedRunHistory[activePreset.presetName].orEmpty(),
+                    activeRunHistory = activeRunHistory,
+                    recordingLinksByRunId = recordingLinksByRunId,
+                    onOpenRunRecording = ::openRunRecording,
                     backupExportState = backupExportState,
                     backupImportState = backupImportState,
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
                     oledScreenShiftEnabled = oledScreenShiftEnabled,
+                    requireHoldToReset = requireHoldToReset,
+                    invertBottomLayout = invertBottomLayout,
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -1985,6 +2183,28 @@ private fun ThorSpeedrunSplitsApp() {
                             )
                         }
                     },
+                    onRequireHoldToResetChange = { enabled ->
+                        requireHoldToReset = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RequireHoldToResetPreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
+                    onInvertBottomLayoutChange = { enabled ->
+                        invertBottomLayout = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = InvertBottomLayoutPreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
                     onSelectedFontModeChange = { fontMode ->
                         selectedFontMode = fontMode
                         coroutineScope.launch {
@@ -2001,7 +2221,9 @@ private fun ThorSpeedrunSplitsApp() {
                     recordingResolution = recordingResolution
                         ?: availableRecordingResolutions.last(),
                     recordingBitrateMbps = recordingBitrateMbps,
+                    recordingFrameRate = recordingFrameRate,
                     recordAudioEnabled = recordAudioEnabled,
+                    saveCompletedRunRecordingsOnly = saveCompletedRunRecordingsOnly,
                     recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                     onRecordOppositeScreenChange = { enabled ->
                         if (enabled) {
@@ -2044,6 +2266,32 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = RecordingBitratePreferenceKey,
                                     value = normalizedMbps.toString()
+                                )
+                            )
+                        }
+                    },
+                    onRecordingFrameRateChange = { frameRate ->
+                        val normalizedFrameRate = when (frameRate) {
+                            LowerRecordingFrameRate -> LowerRecordingFrameRate
+                            else -> DefaultRecordingFrameRate
+                        }
+                        recordingFrameRate = normalizedFrameRate
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingFrameRatePreferenceKey,
+                                    value = normalizedFrameRate.toString()
+                                )
+                            )
+                        }
+                    },
+                    onSaveCompletedRunRecordingsOnlyChange = { enabled ->
+                        saveCompletedRunRecordingsOnly = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = SaveCompletedRunRecordingsPreferenceKey,
+                                    value = enabled.toString()
                                 )
                             )
                         }
@@ -2609,6 +2857,7 @@ private fun PresetStatsPanel(
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
+    segmentTimerText: String,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -2636,6 +2885,14 @@ private fun PresetStatsPanel(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "Total $totalTimeText",
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Segment $segmentTimerText",
             color = SecondaryText,
             fontSize = 13.sp,
             lineHeight = 13.sp,
@@ -2707,7 +2964,7 @@ private fun SplitList(
     ) {
         itemsIndexed(
             items = splits,
-            key = { _, split -> split.name }
+            key = { index, _ -> index }
         ) { index, split ->
             val personalBestTime = displayedComparisonRun?.splitTimes?.getOrNull(index)
             val currentRunTime = completedTimes[index]
@@ -2830,10 +3087,13 @@ private fun BottomControls(
     showResetButton: Boolean,
     showUndoButton: Boolean,
     undoButtonEnabled: Boolean,
+    requireHoldToReset: Boolean,
+    invertBottomLayout: Boolean,
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
     timerText: String,
+    segmentTimerText: String,
     timerColor: Color,
     timerSize: TextUnit,
     onSplit: () -> Unit,
@@ -2845,86 +3105,151 @@ private fun BottomControls(
         verticalAlignment = Alignment.Bottom,
         modifier = modifier
     ) {
-        SplitButton(
-            enabled = buttonEnabled,
-            text = buttonText,
-            onSplit = onSplit,
-            fontSize = 22.sp,
-            modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
-        )
-        AnimatedVisibility(
-            visible = showResetButton || showUndoButton,
-            enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
-                scaleIn(
-                    animationSpec = tween(ButtonFadeMillis),
-                    initialScale = 0.92f
-                ),
-            exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
-                scaleOut(
-                    animationSpec = tween(ButtonFadeMillis),
-                    targetScale = 0.92f
-                )
-        ) {
-            Row {
-                Spacer(modifier = Modifier.width(12.dp))
-                if (showUndoButton) {
-                    val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
-                    Column {
-                        SplitButton(
-                            enabled = undoButtonEnabled,
-                            text = "UNDO",
-                            onSplit = onUndo,
-                            fontSize = 16.sp,
-                            modifier = Modifier.size(
-                                width = resetButtonSize.width,
-                                height = secondaryButtonHeight
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SplitButton(
-                            enabled = showResetButton,
-                            text = "RESET",
-                            onSplit = onReset,
-                            fontSize = 16.sp,
-                            modifier = Modifier.size(
-                                width = resetButtonSize.width,
-                                height = secondaryButtonHeight
-                            )
-                        )
-                    }
-                } else {
-                    SplitButton(
-                        enabled = showResetButton,
-                        text = "RESET",
-                        onSplit = onReset,
-                        fontSize = 20.sp,
-                        modifier = Modifier.size(
-                            width = resetButtonSize.width,
-                            height = resetButtonSize.height
-                        )
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        Column(
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.Bottom
-        ) {
-            PresetStatsPanel(
+        if (invertBottomLayout) {
+            RunTimerAndStats(
                 sumOfBestText = sumOfBestText,
                 attemptedRuns = attemptedRuns,
-                totalTimeText = totalTimeText
+                totalTimeText = totalTimeText,
+                timerText = timerText,
+                segmentTimerText = segmentTimerText,
+                timerColor = timerColor,
+                timerSize = timerSize,
+                alignment = Alignment.Start
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = timerText,
-                color = timerColor,
-                fontSize = timerSize,
-                lineHeight = timerSize,
-                maxLines = 1
+            Spacer(modifier = Modifier.weight(1f))
+            SecondaryRunControls(
+                visible = showResetButton || showUndoButton,
+                showUndoButton = showUndoButton,
+                showResetButton = showResetButton,
+                undoButtonEnabled = undoButtonEnabled,
+                resetButtonSize = resetButtonSize,
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                onUndo = onUndo
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            SplitButton(
+                enabled = buttonEnabled,
+                text = buttonText,
+                onSplit = onSplit,
+                fontSize = 22.sp,
+                modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
+            )
+        } else {
+            SplitButton(
+                enabled = buttonEnabled,
+                text = buttonText,
+                onSplit = onSplit,
+                fontSize = 22.sp,
+                modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            SecondaryRunControls(
+                visible = showResetButton || showUndoButton,
+                showUndoButton = showUndoButton,
+                showResetButton = showResetButton,
+                undoButtonEnabled = undoButtonEnabled,
+                resetButtonSize = resetButtonSize,
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                onUndo = onUndo
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            RunTimerAndStats(
+                sumOfBestText = sumOfBestText,
+                attemptedRuns = attemptedRuns,
+                totalTimeText = totalTimeText,
+                timerText = timerText,
+                segmentTimerText = segmentTimerText,
+                timerColor = timerColor,
+                timerSize = timerSize,
+                alignment = Alignment.End
             )
         }
+    }
+}
+
+@Composable
+private fun SecondaryRunControls(
+    visible: Boolean,
+    showUndoButton: Boolean,
+    showResetButton: Boolean,
+    undoButtonEnabled: Boolean,
+    resetButtonSize: ButtonSize,
+    requireHoldToReset: Boolean,
+    onReset: () -> Unit,
+    onUndo: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
+            scaleIn(animationSpec = tween(ButtonFadeMillis), initialScale = 0.92f),
+        exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
+            scaleOut(animationSpec = tween(ButtonFadeMillis), targetScale = 0.92f)
+    ) {
+        if (showUndoButton) {
+            val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
+            Column {
+                SplitButton(
+                    enabled = undoButtonEnabled,
+                    text = "UNDO",
+                    onSplit = onUndo,
+                    fontSize = 16.sp,
+                    modifier = Modifier.size(resetButtonSize.width, secondaryButtonHeight)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                HoldToResetButton(
+                    enabled = showResetButton,
+                    text = "RESET",
+                    requireHoldToReset = requireHoldToReset,
+                    onReset = onReset,
+                    fontSize = 16.sp,
+                    modifier = Modifier.size(resetButtonSize.width, secondaryButtonHeight)
+                )
+            }
+        } else {
+            HoldToResetButton(
+                enabled = showResetButton,
+                text = "RESET",
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                fontSize = 20.sp,
+                modifier = Modifier.size(resetButtonSize.width, resetButtonSize.height)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RunTimerAndStats(
+    sumOfBestText: String?,
+    attemptedRuns: Int,
+    totalTimeText: String,
+    timerText: String,
+    segmentTimerText: String,
+    timerColor: Color,
+    timerSize: TextUnit,
+    alignment: Alignment.Horizontal
+) {
+    Column(
+        horizontalAlignment = alignment,
+        verticalArrangement = Arrangement.Bottom,
+        modifier = Modifier.offset(y = 3.dp)
+    ) {
+        PresetStatsPanel(
+            sumOfBestText = sumOfBestText,
+            attemptedRuns = attemptedRuns,
+            totalTimeText = totalTimeText,
+            segmentTimerText = segmentTimerText
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = timerText,
+            color = timerColor,
+            fontSize = timerSize,
+            lineHeight = timerSize,
+            maxLines = 1
+        )
     }
 }
 
@@ -3060,28 +3385,38 @@ private fun SettingsPanel(
     activePersonalBest: Run?,
     activeBestSegments: BestSegments?,
     activeRunHistory: List<HistoricalRun>,
+    recordingLinksByRunId: Map<Long, RunRecordingLink>,
+    onOpenRunRecording: (RunRecordingLink) -> Unit,
     backupExportState: BackupExportState,
     backupImportState: BackupImportState,
     selectedThemeMode: AppThemeMode,
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
     oledScreenShiftEnabled: Boolean,
+    requireHoldToReset: Boolean,
+    invertBottomLayout: Boolean,
     selectedFontMode: AppFontMode,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
     onOledScreenShiftChange: (Boolean) -> Unit,
+    onRequireHoldToResetChange: (Boolean) -> Unit,
+    onInvertBottomLayoutChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     recordingFolderUri: String?,
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
+    saveCompletedRunRecordingsOnly: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordingFrameRateChange: (Int) -> Unit,
+    onSaveCompletedRunRecordingsOnlyChange: (Boolean) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseRecordingFolder: () -> Unit,
     onUseDefaultRecordingFolder: () -> Unit,
@@ -3203,6 +3538,17 @@ private fun SettingsPanel(
                     selectedFontMode = selectedFontMode,
                     onSelectedFontModeChange = onSelectedFontModeChange
                 )
+                Spacer(modifier = Modifier.height(20.dp))
+                SettingsSectionTitle("Run Controls", Icons.Filled.Refresh)
+                RequireHoldToResetToggle(
+                    enabled = requireHoldToReset,
+                    onEnabledChange = onRequireHoldToResetChange
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                InvertBottomLayoutToggle(
+                    enabled = invertBottomLayout,
+                    onEnabledChange = onInvertBottomLayoutChange
+                )
                 Spacer(modifier = Modifier.height(22.dp))
                 }
             } else if (selectedSection == SettingsSection.Presets) {
@@ -3241,11 +3587,15 @@ private fun SettingsPanel(
                         availableRecordingResolutions = availableRecordingResolutions,
                         recordingResolution = recordingResolution,
                         recordingBitrateMbps = recordingBitrateMbps,
+                        recordingFrameRate = recordingFrameRate,
                         recordAudioEnabled = recordAudioEnabled,
+                        saveCompletedRunRecordingsOnly = saveCompletedRunRecordingsOnly,
                         recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                         onRecordOppositeScreenChange = onRecordOppositeScreenChange,
                         onRecordingResolutionChange = onRecordingResolutionChange,
                         onRecordingBitrateChange = onRecordingBitrateChange,
+                        onRecordingFrameRateChange = onRecordingFrameRateChange,
+                        onSaveCompletedRunRecordingsOnlyChange = onSaveCompletedRunRecordingsOnlyChange,
                         onRecordAudioChange = onRecordAudioChange,
                         onChooseFolder = onChooseRecordingFolder,
                         onUseDefaultFolder = onUseDefaultRecordingFolder
@@ -3438,6 +3788,8 @@ private fun SettingsPanel(
                     ) { _, run ->
                         HistoricalRunRow(
                             run = run,
+                            recordingLink = recordingLinksByRunId[run.id],
+                            onOpenRecording = onOpenRunRecording,
                             onOpenDetails = { selectedHistoricalRunId = run.id }
                         )
                     }
@@ -3809,6 +4161,8 @@ private fun HistoryHeader(
 @Composable
 private fun HistoricalRunRow(
     run: HistoricalRun,
+    recordingLink: RunRecordingLink?,
+    onOpenRecording: (RunRecordingLink) -> Unit,
     onOpenDetails: () -> Unit
 ) {
     Row(
@@ -3859,11 +4213,30 @@ private fun HistoricalRunRow(
             modifier = Modifier.width(74.dp)
         )
         Spacer(modifier = Modifier.width(10.dp))
+        if (recordingLink != null) {
+            PanelTextButton(
+                text = "VIEW RUN",
+                onClick = { onOpenRecording(recordingLink) },
+                imageVector = Icons.Filled.PlayArrow,
+                modifier = Modifier.size(width = 94.dp, height = 36.dp)
+            )
+        } else {
+            Text(
+                text = "NO VIDEO",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 11.sp,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(94.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
         PanelTextButton(
             text = "DETAILS",
             onClick = onOpenDetails,
             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-            modifier = Modifier.size(width = 100.dp, height = 36.dp)
+            modifier = Modifier.size(width = 88.dp, height = 36.dp)
         )
     }
     Spacer(modifier = Modifier.height(6.dp))
@@ -4439,11 +4812,15 @@ private fun RecordingSettingsPanel(
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
+    saveCompletedRunRecordingsOnly: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordingFrameRateChange: (Int) -> Unit,
+    onSaveCompletedRunRecordingsOnlyChange: (Boolean) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseFolder: () -> Unit,
     onUseDefaultFolder: () -> Unit
@@ -4492,6 +4869,37 @@ private fun RecordingSettingsPanel(
         fontSize = 12.sp,
         lineHeight = 15.sp
     )
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Save only completed run recordings",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Discard a recording when the run is reset",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = saveCompletedRunRecordingsOnly,
+            onCheckedChange = onSaveCompletedRunRecordingsOnlyChange
+        )
+    }
     if (currentDisplayId == InternalDisplayId) {
         Spacer(modifier = Modifier.height(6.dp))
         Text(
@@ -4604,6 +5012,38 @@ private fun RecordingSettingsPanel(
             fontSize = 11.sp
         )
     }
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "Frame rate: ${recordingFrameRate} FPS",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = if (recordingFrameRate == LowerRecordingFrameRate) 0f else 1f,
+        onValueChange = { value ->
+            onRecordingFrameRateChange(
+                if (value < 0.5f) LowerRecordingFrameRate else DefaultRecordingFrameRate
+            )
+        },
+        valueRange = 0f..1f,
+        steps = 0,
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${LowerRecordingFrameRate} FPS",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "${DefaultRecordingFrameRate} FPS",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
     Spacer(modifier = Modifier.height(8.dp))
     Text(
         text = "These controls apply to the next recording and are independent of each other.",
@@ -4613,7 +5053,7 @@ private fun RecordingSettingsPanel(
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text = "Lower resolution or bitrate saves storage space but reduces video quality.",
+        text = "Lower resolution, frame rate, or bitrate saves storage space but reduces video quality.",
         color = SecondaryText,
         fontSize = 12.sp,
         lineHeight = 15.sp
@@ -4866,6 +5306,76 @@ private fun OledScreenShiftToggle(
             )
             Text(
                 text = "Moves the interface slightly every 30 seconds",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun RequireHoldToResetToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Require Hold to Reset",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Hold RESET for half a second to reset a run",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun InvertBottomLayoutToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Invert Bottom Layout",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Place timer and stats left, controls right",
                 color = SecondaryText,
                 fontSize = 11.sp,
                 lineHeight = 13.sp,
@@ -5526,6 +6036,92 @@ private fun SplitButton(
             text = text,
             color = textColor,
             fontSize = fontSize
+        )
+    }
+}
+
+@Composable
+private fun HoldToResetButton(
+    enabled: Boolean,
+    text: String,
+    requireHoldToReset: Boolean,
+    onReset: () -> Unit,
+    fontSize: TextUnit = 22.sp,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val holdProgress = remember { Animatable(0f) }
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> RowBlack
+            isPressed -> ActiveRowBackground
+            else -> RowBlack
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "resetButtonBackground"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> DividerColor
+            isPressed -> PrimaryText
+            else -> PrimaryText
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "resetButtonBorder"
+    )
+
+    LaunchedEffect(isPressed, enabled, requireHoldToReset) {
+        if (enabled && requireHoldToReset && isPressed) {
+            holdProgress.snapTo(0f)
+            holdProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(ResetHoldDurationMillis)
+            )
+            if (isPressed) {
+                vibrate()
+                onReset()
+            }
+        } else {
+            holdProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(ButtonFadeMillis)
+            )
+        }
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(width = 2.dp, color = borderColor)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    if (!requireHoldToReset) {
+                        vibrate()
+                        onReset()
+                    }
+                }
+            )
+    ) {
+        if (requireHoldToReset) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .fillMaxWidth(holdProgress.value)
+                    .background(SuccessGreen.copy(alpha = 0.35f))
+            )
+        }
+        FadingButtonText(
+            text = text,
+            color = if (enabled) PrimaryText else SecondaryText,
+            fontSize = fontSize,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
         )
     }
 }

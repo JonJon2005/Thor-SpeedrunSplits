@@ -16,8 +16,8 @@ android {
         applicationId = "com.example.thorspeedrunsplits"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.6"
+        versionCode = 9
+        versionName = "0.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
