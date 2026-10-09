@@ -259,6 +259,7 @@ private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
+private const val InvertBottomLayoutPreferenceKey = "invert_bottom_layout"
 private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
@@ -1005,6 +1006,7 @@ private fun ThorSpeedrunSplitsApp() {
     var useSystemTheme by remember { mutableStateOf(false) }
     var oledScreenShiftEnabled by remember { mutableStateOf(false) }
     var requireHoldToReset by remember { mutableStateOf(true) }
+    var invertBottomLayout by remember { mutableStateOf(false) }
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
@@ -1502,6 +1504,8 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
         requireHoldToReset =
             appPreferenceDao.getValue(RequireHoldToResetPreferenceKey) != "false"
+        invertBottomLayout =
+            appPreferenceDao.getValue(InvertBottomLayoutPreferenceKey) == "true"
         recordingFolderUri = appPreferenceDao.getValue(RecordingFolderPreferenceKey)
             ?.takeIf { it.isNotBlank() }
         recordOppositeScreenEnabled =
@@ -1718,6 +1722,7 @@ private fun ThorSpeedrunSplitsApp() {
                     showUndoButton = isRunning,
                     undoButtonEnabled = isRunning && activeSplitIndex > 0,
                     requireHoldToReset = requireHoldToReset,
+                    invertBottomLayout = invertBottomLayout,
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
@@ -1972,6 +1977,7 @@ private fun ThorSpeedrunSplitsApp() {
                     useSystemTheme = useSystemTheme,
                     oledScreenShiftEnabled = oledScreenShiftEnabled,
                     requireHoldToReset = requireHoldToReset,
+                    invertBottomLayout = invertBottomLayout,
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -2021,6 +2027,17 @@ private fun ThorSpeedrunSplitsApp() {
                             appPreferenceDao.upsert(
                                 AppPreferenceEntity(
                                     key = RequireHoldToResetPreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
+                    onInvertBottomLayoutChange = { enabled ->
+                        invertBottomLayout = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = InvertBottomLayoutPreferenceKey,
                                     value = enabled.toString()
                                 )
                             )
@@ -2900,6 +2917,7 @@ private fun BottomControls(
     showUndoButton: Boolean,
     undoButtonEnabled: Boolean,
     requireHoldToReset: Boolean,
+    invertBottomLayout: Boolean,
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
@@ -2915,88 +2933,146 @@ private fun BottomControls(
         verticalAlignment = Alignment.Bottom,
         modifier = modifier
     ) {
-        SplitButton(
-            enabled = buttonEnabled,
-            text = buttonText,
-            onSplit = onSplit,
-            fontSize = 22.sp,
-            modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
-        )
-        AnimatedVisibility(
-            visible = showResetButton || showUndoButton,
-            enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
-                scaleIn(
-                    animationSpec = tween(ButtonFadeMillis),
-                    initialScale = 0.92f
-                ),
-            exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
-                scaleOut(
-                    animationSpec = tween(ButtonFadeMillis),
-                    targetScale = 0.92f
-                )
-        ) {
-            Row {
-                Spacer(modifier = Modifier.width(12.dp))
-                if (showUndoButton) {
-                    val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
-                    Column {
-                        SplitButton(
-                            enabled = undoButtonEnabled,
-                            text = "UNDO",
-                            onSplit = onUndo,
-                            fontSize = 16.sp,
-                            modifier = Modifier.size(
-                                width = resetButtonSize.width,
-                                height = secondaryButtonHeight
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        HoldToResetButton(
-                            enabled = showResetButton,
-                            text = "RESET",
-                            requireHoldToReset = requireHoldToReset,
-                            onReset = onReset,
-                            fontSize = 16.sp,
-                            modifier = Modifier.size(
-                                width = resetButtonSize.width,
-                                height = secondaryButtonHeight
-                            )
-                        )
-                    }
-                } else {
-                    HoldToResetButton(
-                        enabled = showResetButton,
-                        text = "RESET",
-                        requireHoldToReset = requireHoldToReset,
-                        onReset = onReset,
-                        fontSize = 20.sp,
-                        modifier = Modifier.size(
-                            width = resetButtonSize.width,
-                            height = resetButtonSize.height
-                        )
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        Column(
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.Bottom
-        ) {
-            PresetStatsPanel(
+        if (invertBottomLayout) {
+            RunTimerAndStats(
                 sumOfBestText = sumOfBestText,
                 attemptedRuns = attemptedRuns,
-                totalTimeText = totalTimeText
+                totalTimeText = totalTimeText,
+                timerText = timerText,
+                timerColor = timerColor,
+                timerSize = timerSize,
+                alignment = Alignment.Start
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = timerText,
-                color = timerColor,
-                fontSize = timerSize,
-                lineHeight = timerSize,
-                maxLines = 1
+            Spacer(modifier = Modifier.weight(1f))
+            SecondaryRunControls(
+                visible = showResetButton || showUndoButton,
+                showUndoButton = showUndoButton,
+                showResetButton = showResetButton,
+                undoButtonEnabled = undoButtonEnabled,
+                resetButtonSize = resetButtonSize,
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                onUndo = onUndo
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            SplitButton(
+                enabled = buttonEnabled,
+                text = buttonText,
+                onSplit = onSplit,
+                fontSize = 22.sp,
+                modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
+            )
+        } else {
+            SplitButton(
+                enabled = buttonEnabled,
+                text = buttonText,
+                onSplit = onSplit,
+                fontSize = 22.sp,
+                modifier = Modifier.size(width = buttonSize.width, height = buttonSize.height)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            SecondaryRunControls(
+                visible = showResetButton || showUndoButton,
+                showUndoButton = showUndoButton,
+                showResetButton = showResetButton,
+                undoButtonEnabled = undoButtonEnabled,
+                resetButtonSize = resetButtonSize,
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                onUndo = onUndo
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            RunTimerAndStats(
+                sumOfBestText = sumOfBestText,
+                attemptedRuns = attemptedRuns,
+                totalTimeText = totalTimeText,
+                timerText = timerText,
+                timerColor = timerColor,
+                timerSize = timerSize,
+                alignment = Alignment.End
             )
         }
+    }
+}
+
+@Composable
+private fun SecondaryRunControls(
+    visible: Boolean,
+    showUndoButton: Boolean,
+    showResetButton: Boolean,
+    undoButtonEnabled: Boolean,
+    resetButtonSize: ButtonSize,
+    requireHoldToReset: Boolean,
+    onReset: () -> Unit,
+    onUndo: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(ButtonFadeMillis)) +
+            scaleIn(animationSpec = tween(ButtonFadeMillis), initialScale = 0.92f),
+        exit = fadeOut(animationSpec = tween(ButtonFadeMillis)) +
+            scaleOut(animationSpec = tween(ButtonFadeMillis), targetScale = 0.92f)
+    ) {
+        if (showUndoButton) {
+            val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
+            Column {
+                SplitButton(
+                    enabled = undoButtonEnabled,
+                    text = "UNDO",
+                    onSplit = onUndo,
+                    fontSize = 16.sp,
+                    modifier = Modifier.size(resetButtonSize.width, secondaryButtonHeight)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                HoldToResetButton(
+                    enabled = showResetButton,
+                    text = "RESET",
+                    requireHoldToReset = requireHoldToReset,
+                    onReset = onReset,
+                    fontSize = 16.sp,
+                    modifier = Modifier.size(resetButtonSize.width, secondaryButtonHeight)
+                )
+            }
+        } else {
+            HoldToResetButton(
+                enabled = showResetButton,
+                text = "RESET",
+                requireHoldToReset = requireHoldToReset,
+                onReset = onReset,
+                fontSize = 20.sp,
+                modifier = Modifier.size(resetButtonSize.width, resetButtonSize.height)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RunTimerAndStats(
+    sumOfBestText: String?,
+    attemptedRuns: Int,
+    totalTimeText: String,
+    timerText: String,
+    timerColor: Color,
+    timerSize: TextUnit,
+    alignment: Alignment.Horizontal
+) {
+    Column(
+        horizontalAlignment = alignment,
+        verticalArrangement = Arrangement.Bottom
+    ) {
+        PresetStatsPanel(
+            sumOfBestText = sumOfBestText,
+            attemptedRuns = attemptedRuns,
+            totalTimeText = totalTimeText
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = timerText,
+            color = timerColor,
+            fontSize = timerSize,
+            lineHeight = timerSize,
+            maxLines = 1
+        )
     }
 }
 
@@ -3139,6 +3215,7 @@ private fun SettingsPanel(
     useSystemTheme: Boolean,
     oledScreenShiftEnabled: Boolean,
     requireHoldToReset: Boolean,
+    invertBottomLayout: Boolean,
     selectedFontMode: AppFontMode,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
@@ -3146,6 +3223,7 @@ private fun SettingsPanel(
     onUseSystemThemeChange: (Boolean) -> Unit,
     onOledScreenShiftChange: (Boolean) -> Unit,
     onRequireHoldToResetChange: (Boolean) -> Unit,
+    onInvertBottomLayoutChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     recordingFolderUri: String?,
     availableRecordingResolutions: List<RecordingResolution>,
@@ -3286,6 +3364,11 @@ private fun SettingsPanel(
                 RequireHoldToResetToggle(
                     enabled = requireHoldToReset,
                     onEnabledChange = onRequireHoldToResetChange
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                InvertBottomLayoutToggle(
+                    enabled = invertBottomLayout,
+                    onEnabledChange = onInvertBottomLayoutChange
                 )
                 Spacer(modifier = Modifier.height(22.dp))
                 }
@@ -5056,6 +5139,41 @@ private fun RequireHoldToResetToggle(
             )
             Text(
                 text = "Hold RESET for half a second to reset a run",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
+private fun InvertBottomLayoutToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Invert Bottom Layout",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Place timer and stats left, controls right",
                 color = SecondaryText,
                 fontSize = 11.sp,
                 lineHeight = 13.sp,
