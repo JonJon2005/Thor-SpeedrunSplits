@@ -2681,7 +2681,7 @@ private fun SettingsPanel(
 
     LaunchedEffect(editPresetScrollRequest, selectedTab) {
         if (editPresetScrollRequest > 0 && selectedTab == PresetSettingsTab.Edit) {
-            settingsListState.animateScrollToItem(1)
+            settingsListState.animateScrollToItem(2)
         }
     }
 
@@ -2697,46 +2697,44 @@ private fun SettingsPanel(
             .ifEmpty { setOf(activePreset.presetName) }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .background(OledBlack)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(104.dp)
-                .background(RowBlack)
-                .border(width = 0.5.dp, color = DividerColor)
-                .padding(start = 24.dp, end = 14.dp)
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Settings",
-                    color = PrimaryText,
-                    fontSize = 24.sp,
-                    lineHeight = 24.sp,
-                    maxLines = 1
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                UpdateCheckRow(
-                    updateCheckState = updateCheckState,
-                    onOpenRelease = onOpenRelease
-                )
-            }
-            CloseButton(
-                onClick = onClose,
-                modifier = Modifier.size(52.dp)
-            )
-        }
-
         LazyColumn(
             state = settingsListState,
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
+                .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(104.dp)
+                        .background(RowBlack)
+                        .border(width = 0.5.dp, color = DividerColor)
+                        .padding(start = 24.dp, end = 72.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Settings",
+                            color = PrimaryText,
+                            fontSize = 24.sp,
+                            lineHeight = 24.sp,
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        UpdateCheckRow(
+                            updateCheckState = updateCheckState,
+                            onOpenRelease = onOpenRelease
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
             item {
                 SettingsSectionTitle("Theme")
                 ThemeModeToggle(
@@ -3049,6 +3047,14 @@ private fun SettingsPanel(
                 }
             }
         }
+
+        CloseButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 26.dp, end = 14.dp)
+                .size(52.dp)
+        )
     }
 }
 

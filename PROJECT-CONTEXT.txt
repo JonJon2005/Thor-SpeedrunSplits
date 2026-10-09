@@ -319,3 +319,4 @@ Change Log
 - [APK] v0.5 released
 - 2026-10-09: Bumped app metadata to v0.6/versionCode 8 and refreshed the README with the complete current feature set while preserving all screenshots.
 - 2026-10-09: Added a persisted OLED Screen Shift toggle under Theme; when enabled, the full interface follows a subtle nine-position two-pixel pattern every 30 seconds to reduce static OLED wear on Thor and Retroid Duo displays.
+- 2026-10-09: Moved the Settings title/update header into the scrollable content so it scrolls away and frees the full display height; the close button remains fixed at the top-right.
