@@ -1,7 +1,10 @@
 package com.example.thorspeedrunsplits
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -9,6 +12,7 @@ import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -61,6 +65,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -176,6 +181,10 @@ private data class GithubRelease(
     val htmlUrl: String
 )
 
+private data class ScreenCaptureConsent(
+    val data: Intent
+)
+
 private sealed interface UpdateCheckState {
     data object Idle : UpdateCheckState
     data object Checking : UpdateCheckState
@@ -227,6 +236,8 @@ private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val FontPreferenceKey = "font_mode"
+private const val RecordingFolderPreferenceKey = "recording_folder_uri"
+private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
@@ -241,6 +252,25 @@ private fun screenNameForDisplayId(displayId: Int?): String {
         null -> "Unknown screen"
         InternalDisplayId -> "Internal screen"
         else -> "External screen"
+    }
+}
+
+private fun recordingFolderLabel(folderUri: String?): String {
+    if (folderUri.isNullOrBlank()) {
+        return "App storage / Movies / Run Recordings"
+    }
+    return runCatching {
+        val documentId = DocumentsContract.getTreeDocumentId(Uri.parse(folderUri))
+        val path = documentId.substringAfter(':', "").trim('/')
+        if (path.isBlank()) "Selected storage root" else path.substringAfterLast('/')
+    }.getOrDefault("Selected custom folder")
+}
+
+private fun MediaProjectionManager.internalDisplayCaptureIntent(): Intent {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+    } else {
+        createScreenCaptureIntent()
     }
 }
 
@@ -933,6 +963,11 @@ private fun ThorSpeedrunSplitsApp() {
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
+    var recordingFolderUri by remember { mutableStateOf<String?>(null) }
+    var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
+    var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
+    var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
+    var recordingSessionActive by remember { mutableStateOf(false) }
     var editPresetScrollRequest by remember { mutableStateOf(0) }
     var presetPendingDelete by remember { mutableStateOf<SplitPreset?>(null) }
     val savedPresets = remember {
@@ -979,6 +1014,94 @@ private fun ThorSpeedrunSplitsApp() {
     var backupExportState by remember { mutableStateOf<BackupExportState>(BackupExportState.Idle) }
     var backupImportState by remember { mutableStateOf<BackupImportState>(BackupImportState.Idle) }
     var pendingBackupBundle by remember { mutableStateOf<BackupBundle?>(null) }
+    val mediaProjectionManager = remember {
+        appContext.getSystemService(MediaProjectionManager::class.java)
+    }
+
+    fun beginRun(pressTime: Long, consent: ScreenCaptureConsent?) {
+        if (isRunning) return
+        val presetName = activePreset.presetName
+        val currentStats = presetStats[presetName] ?: PresetStats()
+        presetStats[presetName] = currentStats.copy(
+            attemptedRuns = currentStats.attemptedRuns + 1
+        )
+        persistedCurrentRunMillis = 0L
+        runComparison = savedRuns[presetName]
+            ?.takeIf { it.splitTimes.size == activePreset.segments.size }
+        isRunning = true
+        startedAtMillis = pressTime
+        nowMillis = pressTime
+        if (recordOppositeScreenEnabled && consent != null) {
+            RunRecordingService.start(
+                context = appContext,
+                projectionData = consent.data,
+                gameName = activePreset.gameTitle,
+                category = activePreset.category,
+                folderUri = recordingFolderUri
+            )
+            recordingSessionActive = true
+            screenCaptureConsent = null
+        }
+        coroutineScope.launch {
+            splitPresetDao.ensurePresetExists(
+                preset = activePreset.toSplitPresetEntity(currentStats),
+                segments = activePreset.toSplitPresetSegmentEntities()
+            )
+            splitPresetDao.incrementAttemptedRuns(presetName)
+        }
+    }
+
+    fun stopRunRecording(runLengthMillis: Long) {
+        if (!recordingSessionActive) return
+        RunRecordingService.stop(appContext, runLengthMillis)
+        recordingSessionActive = false
+    }
+
+    val screenCaptureConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val approved = result.resultCode == Activity.RESULT_OK && result.data != null
+        recordOppositeScreenEnabled = approved
+        val consent = result.data?.takeIf { approved }?.let(::ScreenCaptureConsent)
+        screenCaptureConsent = consent
+        coroutineScope.launch {
+            appPreferenceDao.upsert(
+                AppPreferenceEntity(
+                    key = RecordOppositeScreenPreferenceKey,
+                    value = approved.toString()
+                )
+            )
+        }
+        if (approved && pendingRunStartAfterConsent && consent != null) {
+            pendingRunStartAfterConsent = false
+            beginRun(SystemClock.elapsedRealtime(), consent)
+        } else if (!approved) {
+            pendingRunStartAfterConsent = false
+        }
+    }
+    val recordingFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { selectedFolderUri ->
+        if (selectedFolderUri != null) {
+            val permissionFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching {
+                appContext.contentResolver.takePersistableUriPermission(
+                    selectedFolderUri,
+                    permissionFlags
+                )
+            }
+            recordingFolderUri = selectedFolderUri.toString()
+            coroutineScope.launch {
+                appPreferenceDao.upsert(
+                    AppPreferenceEntity(
+                        key = RecordingFolderPreferenceKey,
+                        value = selectedFolderUri.toString()
+                    )
+                )
+            }
+        }
+    }
     val backupFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { selectedFolderUri ->
@@ -1012,6 +1135,14 @@ private fun ThorSpeedrunSplitsApp() {
     }
 
     fun resetRun(segmentCount: Int) {
+        if (recordingSessionActive) {
+            val runLengthMillis = if (isRunning && startedAtMillis > 0L) {
+                SystemClock.elapsedRealtime() - startedAtMillis
+            } else {
+                finishedElapsedMillis
+            }
+            stopRunRecording(runLengthMillis)
+        }
         isRunning = false
         isFinished = false
         activeSplitIndex = 0
@@ -1264,6 +1395,10 @@ private fun ThorSpeedrunSplitsApp() {
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
         oledScreenShiftEnabled =
             appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
+        recordingFolderUri = appPreferenceDao.getValue(RecordingFolderPreferenceKey)
+            ?.takeIf { it.isNotBlank() }
+        recordOppositeScreenEnabled =
+            appPreferenceDao.getValue(RecordOppositeScreenPreferenceKey) == "true"
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -1461,22 +1596,18 @@ private fun ThorSpeedrunSplitsApp() {
 
                         val pressTime = SystemClock.elapsedRealtime()
                         if (!isRunning) {
-                            val presetName = activePreset.presetName
-                            val currentStats = presetStats[presetName] ?: PresetStats()
-                            presetStats[presetName] = currentStats.copy(
-                                attemptedRuns = currentStats.attemptedRuns + 1
-                            )
-                            persistedCurrentRunMillis = 0L
-                            runComparison = savedRunForActivePreset
-                            isRunning = true
-                            startedAtMillis = pressTime
-                            nowMillis = pressTime
-                            coroutineScope.launch {
-                                splitPresetDao.ensurePresetExists(
-                                    preset = activePreset.toSplitPresetEntity(currentStats),
-                                    segments = activePreset.toSplitPresetSegmentEntities()
-                                )
-                                splitPresetDao.incrementAttemptedRuns(presetName)
+                            if (recordOppositeScreenEnabled) {
+                                val consent = screenCaptureConsent
+                                if (consent == null) {
+                                    pendingRunStartAfterConsent = true
+                                    mediaProjectionManager
+                                        ?.internalDisplayCaptureIntent()
+                                        ?.let(screenCaptureConsentLauncher::launch)
+                                } else {
+                                    beginRun(pressTime, consent)
+                                }
+                            } else {
+                                beginRun(pressTime, null)
                             }
                             return@BottomControls
                         }
@@ -1513,6 +1644,7 @@ private fun ThorSpeedrunSplitsApp() {
                         completedTimes[activeSplitIndex] = splitElapsed
 
                         if (activeSplitIndex == activePreset.segments.lastIndex) {
+                            stopRunRecording(splitElapsed)
                             isRunning = false
                             isFinished = true
                             finishedElapsedMillis = splitElapsed
@@ -1748,6 +1880,54 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = FontPreferenceKey,
                                     value = fontMode.storageValue
+                                )
+                            )
+                        }
+                    },
+                    recordingFolderUri = recordingFolderUri,
+                    recordOppositeScreenEnabled = recordOppositeScreenEnabled,
+                    onRecordOppositeScreenChange = { enabled ->
+                        if (enabled) {
+                            mediaProjectionManager?.internalDisplayCaptureIntent()?.let {
+                                screenCaptureConsentLauncher.launch(it)
+                            }
+                        } else {
+                            recordOppositeScreenEnabled = false
+                            screenCaptureConsent = null
+                            pendingRunStartAfterConsent = false
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordOppositeScreenPreferenceKey,
+                                        value = "false"
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onChooseRecordingFolder = {
+                        recordingFolderLauncher.launch(
+                            recordingFolderUri?.let(Uri::parse)
+                        )
+                    },
+                    onUseDefaultRecordingFolder = {
+                        val previousFolderUri = recordingFolderUri
+                        if (previousFolderUri != null) {
+                            val permissionFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            runCatching {
+                                appContext.contentResolver.releasePersistableUriPermission(
+                                    Uri.parse(previousFolderUri),
+                                    permissionFlags
+                                )
+                            }
+                        }
+                        recordingFolderUri = null
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingFolderPreferenceKey,
+                                    value = ""
                                 )
                             )
                         }
@@ -2133,6 +2313,7 @@ private enum class SettingsSection(val label: String) {
     Customization("Customization"),
     Presets("Presets"),
     Runs("Runs & Records"),
+    Recording("Recording"),
     Data("Backup & Data"),
     About("About")
 }
@@ -2142,6 +2323,7 @@ private val SettingsSection.icon: ImageVector
         SettingsSection.Customization -> Icons.Filled.Settings
         SettingsSection.Presets -> Icons.AutoMirrored.Filled.List
         SettingsSection.Runs -> Icons.Filled.DateRange
+        SettingsSection.Recording -> Icons.Filled.PlayArrow
         SettingsSection.Data -> Icons.Filled.Share
         SettingsSection.About -> Icons.Filled.Info
     }
@@ -2678,6 +2860,11 @@ private fun SettingsPanel(
     onUseSystemThemeChange: (Boolean) -> Unit,
     onOledScreenShiftChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
+    recordingFolderUri: String?,
+    recordOppositeScreenEnabled: Boolean,
+    onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onChooseRecordingFolder: () -> Unit,
+    onUseDefaultRecordingFolder: () -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
     onRequestBackupImport: () -> Unit,
     selectedSection: SettingsSection,
@@ -2820,6 +3007,17 @@ private fun SettingsPanel(
                         onSelectedViewChange = { selectedRunsView = it }
                     )
                     Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else if (selectedSection == SettingsSection.Recording) {
+                item {
+                    RecordingSettingsPanel(
+                        recordingFolderUri = recordingFolderUri,
+                        recordOppositeScreenEnabled = recordOppositeScreenEnabled,
+                        onRecordOppositeScreenChange = onRecordOppositeScreenChange,
+                        onChooseFolder = onChooseRecordingFolder,
+                        onUseDefaultFolder = onUseDefaultRecordingFolder
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
                 }
             } else if (selectedSection == SettingsSection.About) {
                 item {
@@ -3773,6 +3971,7 @@ private fun settingsSectionDescription(section: SettingsSection): String {
         SettingsSection.Customization -> "Appearance and display behavior"
         SettingsSection.Presets -> "Create, load, and edit split layouts"
         SettingsSection.Runs -> "Personal bests, golds, and completed attempts"
+        SettingsSection.Recording -> "Capture and save run recordings"
         SettingsSection.Data -> "Back up or restore timer data"
         SettingsSection.About -> "Version and update information"
     }
@@ -3990,6 +4189,124 @@ private fun SettingsTwoWayTabs(
             modifier = Modifier.weight(1f)
         )
     }
+}
+
+@Composable
+private fun RecordingSettingsPanel(
+    recordingFolderUri: String?,
+    recordOppositeScreenEnabled: Boolean,
+    onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onChooseFolder: () -> Unit,
+    onUseDefaultFolder: () -> Unit
+) {
+    val usesCustomFolder = !recordingFolderUri.isNullOrBlank()
+    val currentDisplayId = LocalView.current.display?.displayId
+    val captureTargetLabel = when (currentDisplayId) {
+        null -> "Capture target: Internal screen"
+        InternalDisplayId -> "Capture target: Internal screen (same screen)"
+        else -> "Capture target: Internal screen (opposite screen)"
+    }
+
+    SettingsSectionTitle("Capture", Icons.Filled.PlayArrow)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Record runs on opposite screen",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = captureTargetLabel,
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1
+            )
+        }
+        SettingsSwitch(
+            checked = recordOppositeScreenEnabled,
+            onCheckedChange = onRecordOppositeScreenChange
+        )
+    }
+    Text(
+        text = "Recording starts with the run and ends 3 seconds after finish or reset. Android requires capture approval for each run.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    if (currentDisplayId == InternalDisplayId) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Android can auto-capture only the internal display. For true opposite-screen capture, open this app on the external screen.",
+            color = GoldSplit,
+            fontSize = 12.sp,
+            lineHeight = 15.sp
+        )
+    }
+    Spacer(modifier = Modifier.height(18.dp))
+
+    SettingsSectionTitle("Recording Location", Icons.Filled.PlayArrow)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(14.dp)
+    ) {
+        Text(
+            text = if (usesCustomFolder) "Custom folder" else "Default app storage",
+            color = PrimaryText,
+            fontSize = 16.sp,
+            lineHeight = 16.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = recordingFolderLabel(recordingFolderUri),
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 16.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    Row(modifier = Modifier.fillMaxWidth()) {
+        PanelTextButton(
+            text = "USE APP STORAGE",
+            onClick = onUseDefaultFolder,
+            enabled = usesCustomFolder,
+            imageVector = Icons.Filled.Refresh,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        PanelTextButton(
+            text = "CHOOSE FOLDER",
+            onClick = onChooseFolder,
+            imageVector = Icons.AutoMirrored.Filled.List,
+            modifier = Modifier
+                .weight(1f)
+                .height(44.dp)
+        )
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+    Text(
+        text = "Completed MP4 recordings are saved to this location.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
 }
 
 @Composable

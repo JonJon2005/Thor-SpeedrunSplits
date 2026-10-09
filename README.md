@@ -30,6 +30,7 @@ You can add it to <b>Obtainium</b> here:
 - Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
 - Automatic GitHub release checks with an in-app `Update Now` link when a newer version is available.
 - Collapsible settings drawer for customization, presets, runs and records, backup and data, and app information, with a sticky section header.
+- Automatic run recording of Android's internal/default display when enabled: capture starts with the timer, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder with the preset game, category, run length, and date in its filename. On dual-screen devices, true opposite-screen capture requires the timer app to run on the external display.
 - Immersive fullscreen layout designed for the AYN Thor's 1080x1240 bottom AMOLED display, with large touch targets and long-title handling.
 
 ## Screenshots
