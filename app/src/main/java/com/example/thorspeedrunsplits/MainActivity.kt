@@ -1,10 +1,12 @@
 package com.example.thorspeedrunsplits
 
+import android.Manifest
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -258,6 +260,7 @@ private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
+private const val RecordAudioPreferenceKey = "record_audio"
 private const val RecordingResolutionPreferenceKey = "recording_resolution"
 private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
 private const val DefaultRecordingBitrateMbps = 10
@@ -989,6 +992,7 @@ private fun ThorSpeedrunSplitsApp() {
     var activeSplitIndex by remember { mutableStateOf(0) }
     var resetScrollRequest by remember { mutableStateOf(0) }
     var isSettingsOpen by remember { mutableStateOf(false) }
+    var settingsNavigationRequest by remember { mutableStateOf(0) }
     var activePreset by remember { mutableStateOf(DefaultPreset) }
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
@@ -999,6 +1003,7 @@ private fun ThorSpeedrunSplitsApp() {
     var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
     var recordingFolderUri by remember { mutableStateOf<String?>(null) }
     var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
+    var recordAudioEnabled by remember { mutableStateOf(false) }
     var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
     var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
     var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
@@ -1105,7 +1110,8 @@ private fun ThorSpeedrunSplitsApp() {
                 folderUri = recordingFolderUri,
                 resolutionWidth = selectedResolution.width,
                 resolutionHeight = selectedResolution.height,
-                bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000
+                bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000,
+                recordAudio = recordAudioEnabled
             )
             recordingSessionActive = true
             screenCaptureConsent = null
@@ -1144,6 +1150,19 @@ private fun ThorSpeedrunSplitsApp() {
             beginRun(SystemClock.elapsedRealtime(), consent)
         } else if (!approved) {
             pendingRunStartAfterConsent = false
+        }
+    }
+    val playbackAudioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        recordAudioEnabled = granted
+        coroutineScope.launch {
+            appPreferenceDao.upsert(
+                AppPreferenceEntity(
+                    key = RecordAudioPreferenceKey,
+                    value = granted.toString()
+                )
+            )
         }
     }
     val recordingFolderLauncher = rememberLauncherForActivityResult(
@@ -1466,6 +1485,10 @@ private fun ThorSpeedrunSplitsApp() {
             ?.takeIf { it.isNotBlank() }
         recordOppositeScreenEnabled =
             appPreferenceDao.getValue(RecordOppositeScreenPreferenceKey) == "true"
+        recordAudioEnabled =
+            appPreferenceDao.getValue(RecordAudioPreferenceKey) == "true" &&
+                appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
         val savedResolution = appPreferenceDao
             .getValue(RecordingResolutionPreferenceKey)
             ?.split('x')
@@ -1903,6 +1926,7 @@ private fun ThorSpeedrunSplitsApp() {
                     .fillMaxSize()
             ) {
                 SettingsPanel(
+                    openNavigationRequest = settingsNavigationRequest,
                     onClose = {
                         presetPendingDelete = null
                         isSettingsOpen = false
@@ -1977,6 +2001,7 @@ private fun ThorSpeedrunSplitsApp() {
                     recordingResolution = recordingResolution
                         ?: availableRecordingResolutions.last(),
                     recordingBitrateMbps = recordingBitrateMbps,
+                    recordAudioEnabled = recordAudioEnabled,
                     recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                     onRecordOppositeScreenChange = { enabled ->
                         if (enabled) {
@@ -2020,6 +2045,36 @@ private fun ThorSpeedrunSplitsApp() {
                                     key = RecordingBitratePreferenceKey,
                                     value = normalizedMbps.toString()
                                 )
+                            )
+                        }
+                    },
+                    onRecordAudioChange = { enabled ->
+                        if (!enabled) {
+                            recordAudioEnabled = false
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordAudioPreferenceKey,
+                                        value = "false"
+                                    )
+                                )
+                            }
+                        } else if (
+                            appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            recordAudioEnabled = true
+                            coroutineScope.launch {
+                                appPreferenceDao.upsert(
+                                    AppPreferenceEntity(
+                                        key = RecordAudioPreferenceKey,
+                                        value = "true"
+                                    )
+                                )
+                            }
+                        } else {
+                            playbackAudioPermissionLauncher.launch(
+                                Manifest.permission.RECORD_AUDIO
                             )
                         }
                     },
@@ -2424,7 +2479,10 @@ private fun ThorSpeedrunSplitsApp() {
                         RecordingIndicator(modifier = Modifier.size(48.dp))
                     }
                     SettingsButton(
-                        onClick = { isSettingsOpen = true },
+                        onClick = {
+                            settingsNavigationRequest += 1
+                            isSettingsOpen = true
+                        },
                         modifier = Modifier.size(48.dp)
                     )
                 }
@@ -2995,6 +3053,7 @@ private fun RecordingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 private fun SettingsPanel(
+    openNavigationRequest: Int,
     onClose: () -> Unit,
     savedPresets: List<SplitPreset>,
     activePreset: SplitPreset,
@@ -3018,10 +3077,12 @@ private fun SettingsPanel(
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordAudioEnabled: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordAudioChange: (Boolean) -> Unit,
     onChooseRecordingFolder: () -> Unit,
     onUseDefaultRecordingFolder: () -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
@@ -3081,6 +3142,12 @@ private fun SettingsPanel(
         if (editPresetScrollRequest > 0 && selectedSection == SettingsSection.Presets) {
             selectedPresetView = PresetSettingsView.Edit
             settingsListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(openNavigationRequest) {
+        if (openNavigationRequest > 0) {
+            isNavigationOpen = true
         }
     }
 
@@ -3174,10 +3241,12 @@ private fun SettingsPanel(
                         availableRecordingResolutions = availableRecordingResolutions,
                         recordingResolution = recordingResolution,
                         recordingBitrateMbps = recordingBitrateMbps,
+                        recordAudioEnabled = recordAudioEnabled,
                         recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                         onRecordOppositeScreenChange = onRecordOppositeScreenChange,
                         onRecordingResolutionChange = onRecordingResolutionChange,
                         onRecordingBitrateChange = onRecordingBitrateChange,
+                        onRecordAudioChange = onRecordAudioChange,
                         onChooseFolder = onChooseRecordingFolder,
                         onUseDefaultFolder = onUseDefaultRecordingFolder
                     )
@@ -4370,10 +4439,12 @@ private fun RecordingSettingsPanel(
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordAudioEnabled: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordAudioChange: (Boolean) -> Unit,
     onChooseFolder: () -> Unit,
     onUseDefaultFolder: () -> Unit
 ) {
@@ -4430,6 +4501,44 @@ private fun RecordingSettingsPanel(
             lineHeight = 15.sp
         )
     }
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Record internal audio",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Device playback only; microphone input is not recorded",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = recordAudioEnabled,
+            onCheckedChange = onRecordAudioChange
+        )
+    }
+    Text(
+        text = "Android may label the required permission as microphone access. The app uses playback capture for the internal display instead.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    Spacer(modifier = Modifier.height(10.dp))
     Spacer(modifier = Modifier.height(18.dp))
 
     SettingsSectionTitle("Video Quality", Icons.Filled.Settings)

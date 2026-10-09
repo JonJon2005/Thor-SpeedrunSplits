@@ -31,6 +31,7 @@ You can add it to <b>Obtainium</b> here:
 - Automatic GitHub release checks with an in-app `Update Now` link when a newer version is available.
 - Collapsible settings drawer for customization, presets, runs and records, backup and data, and app information, with a sticky section header.
 - Automatic run recording of Android's internal/default display when enabled: capture starts with the timer, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder with the preset game, category, run length, and date in its filename. On dual-screen devices, true opposite-screen capture requires the timer app to run on the external display.
+- Optional internal-display playback audio capture can be included in recordings; it captures device playback rather than microphone input and combines the audio with the MP4 after capture.
 - Independent recording controls for common 240p, 480p, 720p, and 1080p resolutions and video bitrate (2–16 Mbps), applied directly during capture to control quality and file size; recordings use 60 FPS.
 - A slow-flashing red recording indicator appears beside Settings while capture is active, including during the post-run tail.
 - Immersive fullscreen layout designed for the AYN Thor's 1080x1240 bottom AMOLED display, with large touch targets and long-title handling.

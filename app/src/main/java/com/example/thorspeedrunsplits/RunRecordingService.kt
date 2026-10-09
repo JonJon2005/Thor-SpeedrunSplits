@@ -10,7 +10,16 @@ import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.AudioPlaybackCaptureConfiguration
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaExtractor
 import android.media.MediaRecorder
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -26,9 +35,11 @@ import android.util.DisplayMetrics
 import android.view.Display
 import androidx.core.content.ContextCompat
 import java.io.File
+import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 class RunRecordingService : Service() {
@@ -39,6 +50,9 @@ class RunRecordingService : Service() {
     private var outputFile: File? = null
     private var outputDocumentUri: Uri? = null
     private var outputFileDescriptor: ParcelFileDescriptor? = null
+    private var audioOutputFile: File? = null
+    private var playbackAudioCapture: PlaybackAudioCapture? = null
+    private var recordAudioEnabled = false
     private var gameName = "Run"
     private var category = "Any%"
     private var recordingStartedAt = 0L
@@ -98,6 +112,7 @@ class RunRecordingService : Service() {
 
         gameName = intent.getStringExtra(EXTRA_GAME_NAME).orEmpty().ifBlank { "Run" }
         category = intent.getStringExtra(EXTRA_CATEGORY).orEmpty().ifBlank { "Any%" }
+        recordAudioEnabled = intent.getBooleanExtra(EXTRA_RECORD_AUDIO, false)
         requestedRunLengthMillis = null
 
         try {
@@ -120,7 +135,10 @@ class RunRecordingService : Service() {
                 nativeWidth = metrics.widthPixels,
                 nativeHeight = metrics.heightPixels
             )
-            prepareOutput(intent.getStringExtra(EXTRA_FOLDER_URI))
+            prepareOutput(
+                folderUriString = intent.getStringExtra(EXTRA_FOLDER_URI),
+                recordAudio = recordAudioEnabled
+            )
             val recorder = createRecorder(width, height, bitrateBitsPerSecond)
             mediaRecorder = recorder
 
@@ -141,6 +159,12 @@ class RunRecordingService : Service() {
             )
             recorder.start()
             recordingStartedAt = SystemClock.elapsedRealtime()
+            if (recordAudioEnabled) {
+                playbackAudioCapture = PlaybackAudioCapture(
+                    projection = projection,
+                    outputFile = requireNotNull(audioOutputFile)
+                ).also { it.start(recordingStartedAt) }
+            }
             isRecording = true
             broadcastRecordingState(active = true)
         } catch (_: Exception) {
@@ -182,7 +206,7 @@ class RunRecordingService : Service() {
         return recorder
     }
 
-    private fun prepareOutput(folderUriString: String?) {
+    private fun prepareOutput(folderUriString: String?, recordAudio: Boolean) {
         val temporaryName = "ThorSpeedrun_${System.currentTimeMillis()}_recording.mp4"
         if (!folderUriString.isNullOrBlank()) {
             val treeUri = Uri.parse(folderUriString)
@@ -196,14 +220,30 @@ class RunRecordingService : Service() {
                 "video/mp4",
                 temporaryName
             ) ?: error("The recording file could not be created.")
-            outputFileDescriptor = contentResolver.openFileDescriptor(
-                requireNotNull(outputDocumentUri),
-                "w"
-            ) ?: error("The recording file could not be opened.")
+            if (recordAudio) {
+                outputFile = File(cacheDir, temporaryName)
+                audioOutputFile = File(
+                    cacheDir,
+                    temporaryName.removeSuffix(".mp4") + "_audio.m4a"
+                )
+            } else {
+                outputFileDescriptor = contentResolver.openFileDescriptor(
+                    requireNotNull(outputDocumentUri),
+                    "w"
+                ) ?: error("The recording file could not be opened.")
+            }
         } else {
-            val moviesRoot = getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: filesDir
-            val recordingsDirectory = File(moviesRoot, "Run Recordings").apply { mkdirs() }
-            outputFile = File(recordingsDirectory, temporaryName)
+            if (recordAudio) {
+                outputFile = File(cacheDir, temporaryName)
+                audioOutputFile = File(
+                    cacheDir,
+                    temporaryName.removeSuffix(".mp4") + "_audio.m4a"
+                )
+            } else {
+                val moviesRoot = getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: filesDir
+                val recordingsDirectory = File(moviesRoot, "Run Recordings").apply { mkdirs() }
+                outputFile = File(recordingsDirectory, temporaryName)
+            }
         }
     }
 
@@ -214,6 +254,8 @@ class RunRecordingService : Service() {
 
         val recorder = mediaRecorder
         mediaRecorder = null
+        runCatching { playbackAudioCapture?.stop() }
+        playbackAudioCapture = null
         runCatching { recorder?.stop() }
             .onFailure { discardOutput() }
         runCatching { recorder?.reset() }
@@ -246,6 +288,27 @@ class RunRecordingService : Service() {
             runLengthMillis = runLengthMillis,
             completedAtMillis = System.currentTimeMillis()
         )
+        if (recordAudioEnabled) {
+            val videoFile = outputFile
+            val audioFile = audioOutputFile
+            val muxedFile = if (videoFile != null && audioFile != null) {
+                muxAudioIntoVideo(videoFile, audioFile)
+            } else {
+                null
+            }
+            if (muxedFile != null) {
+                writeMuxedOutput(muxedFile, finalName)
+                muxedFile.delete()
+            } else {
+                discardOutput()
+            }
+            outputFile?.delete()
+            audioOutputFile?.delete()
+            outputFile = null
+            outputDocumentUri = null
+            audioOutputFile = null
+            return
+        }
         outputFile?.let { temporaryFile ->
             if (temporaryFile.exists()) {
                 temporaryFile.renameTo(File(temporaryFile.parentFile, finalName))
@@ -259,7 +322,10 @@ class RunRecordingService : Service() {
     }
 
     private fun discardOutput() {
+        runCatching { playbackAudioCapture?.stop() }
+        playbackAudioCapture = null
         outputFile?.delete()
+        audioOutputFile?.delete()
         outputDocumentUri?.let { uri ->
             runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
         }
@@ -267,6 +333,133 @@ class RunRecordingService : Service() {
         outputDocumentUri = null
         outputFileDescriptor?.close()
         outputFileDescriptor = null
+        audioOutputFile = null
+        recordAudioEnabled = false
+    }
+
+    private fun muxAudioIntoVideo(videoFile: File, audioFile: File): File? {
+        if (!videoFile.exists() || !audioFile.exists() || audioFile.length() == 0L) {
+            return null
+        }
+        val muxedFile = File(
+            cacheDir,
+            videoFile.nameWithoutExtension + "_with_audio.mp4"
+        )
+        muxedFile.delete()
+        val videoExtractor = MediaExtractor()
+        val audioExtractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        return try {
+            videoExtractor.setDataSource(videoFile.absolutePath)
+            audioExtractor.setDataSource(audioFile.absolutePath)
+            val videoTrackIndex = findTrack(videoExtractor, "video/")
+            val audioTrackIndex = findTrack(audioExtractor, "audio/")
+            if (videoTrackIndex < 0 || audioTrackIndex < 0) {
+                return null
+            }
+            val outputMuxer = MediaMuxer(
+                muxedFile.absolutePath,
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            )
+            muxer = outputMuxer
+            val muxedVideoTrack = outputMuxer.addTrack(
+                videoExtractor.getTrackFormat(videoTrackIndex)
+            )
+            val muxedAudioTrack = outputMuxer.addTrack(
+                audioExtractor.getTrackFormat(audioTrackIndex)
+            )
+            outputMuxer.start()
+            muxerStarted = true
+            copyExtractorSamples(
+                extractor = videoExtractor,
+                sourceTrackIndex = videoTrackIndex,
+                muxer = outputMuxer,
+                destinationTrackIndex = muxedVideoTrack
+            )
+            copyExtractorSamples(
+                extractor = audioExtractor,
+                sourceTrackIndex = audioTrackIndex,
+                muxer = outputMuxer,
+                destinationTrackIndex = muxedAudioTrack
+            )
+            outputMuxer.stop()
+            muxerStarted = false
+            muxedFile.takeIf { it.exists() && it.length() > 0L }
+        } catch (_: Exception) {
+            muxedFile.delete()
+            null
+        } finally {
+            if (muxerStarted) {
+                runCatching { muxer?.stop() }
+            }
+            runCatching { muxer?.release() }
+            videoExtractor.release()
+            audioExtractor.release()
+        }
+    }
+
+    private fun findTrack(extractor: MediaExtractor, mimePrefix: String): Int {
+        for (trackIndex in 0 until extractor.trackCount) {
+            val mime = extractor.getTrackFormat(trackIndex)
+                .getString(MediaFormat.KEY_MIME)
+            if (mime?.startsWith(mimePrefix) == true) {
+                return trackIndex
+            }
+        }
+        return -1
+    }
+
+    private fun copyExtractorSamples(
+        extractor: MediaExtractor,
+        sourceTrackIndex: Int,
+        muxer: MediaMuxer,
+        destinationTrackIndex: Int
+    ) {
+        extractor.selectTrack(sourceTrackIndex)
+        var buffer = ByteBuffer.allocate(64 * 1024)
+        val bufferInfo = MediaCodec.BufferInfo()
+        while (true) {
+            val sampleSize = extractor.sampleSize
+            if (sampleSize < 0L) break
+            if (sampleSize > buffer.capacity().toLong()) {
+                buffer = ByteBuffer.allocate(sampleSize.toInt())
+            }
+            buffer.clear()
+            val bytesRead = extractor.readSampleData(buffer, 0)
+            if (bytesRead < 0) break
+            buffer.position(0)
+            buffer.limit(bytesRead)
+            bufferInfo.set(
+                0,
+                bytesRead,
+                extractor.sampleTime.coerceAtLeast(0L),
+                extractor.sampleFlags
+            )
+            muxer.writeSampleData(destinationTrackIndex, buffer, bufferInfo)
+            extractor.advance()
+        }
+        extractor.unselectTrack(sourceTrackIndex)
+    }
+
+    private fun writeMuxedOutput(muxedFile: File, finalName: String) {
+        try {
+            val documentUri = outputDocumentUri
+            if (documentUri != null) {
+                contentResolver.openOutputStream(documentUri, "wt")?.use { output ->
+                    muxedFile.inputStream().use { input -> input.copyTo(output) }
+                } ?: error("The recording file could not be opened.")
+                runCatching {
+                    DocumentsContract.renameDocument(contentResolver, documentUri, finalName)
+                }
+            } else {
+                val moviesRoot = getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: filesDir
+                val recordingsDirectory = File(moviesRoot, "Run Recordings").apply { mkdirs() }
+                muxedFile.copyTo(File(recordingsDirectory, finalName), overwrite = true)
+            }
+        } catch (_: Exception) {
+            discardOutput()
+        }
     }
 
     private fun elapsedRecordingMillis(): Long {
@@ -359,6 +552,7 @@ class RunRecordingService : Service() {
         private const val EXTRA_RESOLUTION_WIDTH = "resolution_width"
         private const val EXTRA_RESOLUTION_HEIGHT = "resolution_height"
         private const val EXTRA_BITRATE_BITS_PER_SECOND = "bitrate_bits_per_second"
+        private const val EXTRA_RECORD_AUDIO = "record_audio"
         private const val EXTRA_RUN_LENGTH_MILLIS = "run_length_millis"
         private const val NOTIFICATION_CHANNEL_ID = "run_recording"
         private const val NOTIFICATION_ID = 6006
@@ -375,7 +569,8 @@ class RunRecordingService : Service() {
             folderUri: String?,
             resolutionWidth: Int,
             resolutionHeight: Int,
-            bitrateBitsPerSecond: Int
+            bitrateBitsPerSecond: Int,
+            recordAudio: Boolean
         ) {
             val intent = Intent(context, RunRecordingService::class.java).apply {
                 action = ACTION_START
@@ -386,6 +581,7 @@ class RunRecordingService : Service() {
                 putExtra(EXTRA_RESOLUTION_WIDTH, resolutionWidth)
                 putExtra(EXTRA_RESOLUTION_HEIGHT, resolutionHeight)
                 putExtra(EXTRA_BITRATE_BITS_PER_SECOND, bitrateBitsPerSecond)
+                putExtra(EXTRA_RECORD_AUDIO, recordAudio)
             }
             ContextCompat.startForegroundService(context, intent)
         }
@@ -398,6 +594,243 @@ class RunRecordingService : Service() {
                 }
             )
         }
+    }
+}
+
+private class PlaybackAudioCapture(
+    private val projection: MediaProjection,
+    private val outputFile: File
+) {
+    private var audioRecord: AudioRecord? = null
+    private var encoder: MediaCodec? = null
+    private var muxer: MediaMuxer? = null
+    private var worker: Thread? = null
+    private val stopRequested = AtomicBoolean(false)
+    private var encoderStarted = false
+    private var muxerStarted = false
+    private var audioFileReady = false
+    private var audioTrackIndex = -1
+
+    fun start(recordingStartedAtElapsedRealtime: Long) {
+        outputFile.parentFile?.mkdirs()
+        outputFile.delete()
+
+        val sampleRate = 48_000
+        val channelCount = 2
+        val channelMask = AudioFormat.CHANNEL_IN_STEREO
+        val encoding = AudioFormat.ENCODING_PCM_16BIT
+        val minBufferSize = AudioRecord.getMinBufferSize(
+            sampleRate,
+            channelMask,
+            encoding
+        )
+        require(minBufferSize > 0) { "Playback audio capture is unavailable." }
+
+        val captureConfig = AudioPlaybackCaptureConfiguration.Builder(projection)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .build()
+        val format = AudioFormat.Builder()
+            .setEncoding(encoding)
+            .setSampleRate(sampleRate)
+            .setChannelMask(channelMask)
+            .build()
+        val record = AudioRecord.Builder()
+            .setAudioFormat(format)
+            .setAudioPlaybackCaptureConfig(captureConfig)
+            .setBufferSizeInBytes(minBufferSize * 2)
+            .build()
+        require(record.state == AudioRecord.STATE_INITIALIZED) {
+            "Playback audio capture could not be initialized."
+        }
+
+        val codecFormat = MediaFormat.createAudioFormat(
+            MediaFormat.MIMETYPE_AUDIO_AAC,
+            sampleRate,
+            channelCount
+        ).apply {
+            setInteger(
+                MediaFormat.KEY_AAC_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AACObjectLC
+            )
+            setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, minBufferSize)
+        }
+        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        var audioMuxer: MediaMuxer? = null
+        try {
+            codec.configure(codecFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            audioMuxer = MediaMuxer(
+                outputFile.absolutePath,
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            )
+        audioRecord = record
+        encoder = codec
+        muxer = audioMuxer
+        stopRequested.set(false)
+        audioFileReady = false
+            codec.start()
+            encoderStarted = true
+            record.startRecording()
+            require(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                "Playback audio capture did not start."
+            }
+            worker = Thread(
+                {
+                    encodeLoop(recordingStartedAtElapsedRealtime, minBufferSize)
+                },
+                "ThorPlaybackAudioCapture"
+            ).also { it.start() }
+        } catch (exception: Exception) {
+            runCatching { record.stop() }
+            runCatching { record.release() }
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            runCatching { audioMuxer?.release() }
+            audioRecord = null
+            encoder = null
+            muxer = null
+            outputFile.delete()
+            throw exception
+        }
+    }
+
+    fun stop() {
+        stopRequested.set(true)
+        runCatching { audioRecord?.stop() }
+        worker?.join(3_000L)
+        if (worker?.isAlive == true) {
+            worker?.interrupt()
+            worker?.join(500L)
+        }
+        worker = null
+        releaseResources()
+    }
+
+    private fun encodeLoop(recordingStartedAtElapsedRealtime: Long, minBufferSize: Int) {
+        val record = audioRecord ?: return
+        val codec = encoder ?: return
+        val bufferInfo = MediaCodec.BufferInfo()
+        var inputDone = false
+        var outputDone = false
+
+        try {
+            while (!outputDone) {
+                if (!inputDone) {
+                    val inputIndex = codec.dequeueInputBuffer(10_000L)
+                    if (inputIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inputIndex)
+                        if (inputBuffer == null) {
+                            codec.queueInputBuffer(
+                                inputIndex,
+                                0,
+                                0,
+                                audioPresentationTimeUs(recordingStartedAtElapsedRealtime),
+                                MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                            )
+                            inputDone = true
+                        } else {
+                            inputBuffer.clear()
+                            val bytesRead = if (stopRequested.get()) {
+                                -1
+                            } else {
+                                record.read(
+                                    inputBuffer,
+                                    minOf(inputBuffer.remaining(), minBufferSize),
+                                    AudioRecord.READ_BLOCKING
+                                )
+                            }
+                            if (bytesRead > 0) {
+                                codec.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    bytesRead,
+                                    audioPresentationTimeUs(recordingStartedAtElapsedRealtime),
+                                    0
+                                )
+                            } else {
+                                codec.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    0,
+                                    audioPresentationTimeUs(recordingStartedAtElapsedRealtime),
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+                                inputDone = true
+                            }
+                        }
+                    }
+                }
+
+                var tryAgainLater = false
+                while (!tryAgainLater && !outputDone) {
+                    when (val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0L)) {
+                        MediaCodec.INFO_TRY_AGAIN_LATER -> tryAgainLater = true
+                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            check(!muxerStarted) { "Audio output format changed twice." }
+                            audioTrackIndex = requireNotNull(muxer).addTrack(codec.outputFormat)
+                            requireNotNull(muxer).start()
+                            muxerStarted = true
+                        }
+                        else -> if (outputIndex >= 0) {
+                            val outputBuffer = codec.getOutputBuffer(outputIndex)
+                            if (
+                                outputBuffer != null &&
+                                bufferInfo.size > 0 &&
+                                muxerStarted &&
+                                bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
+                            ) {
+                                outputBuffer.position(bufferInfo.offset)
+                                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                                requireNotNull(muxer).writeSampleData(
+                                    audioTrackIndex,
+                                    outputBuffer,
+                                    bufferInfo
+                                )
+                            }
+                            codec.releaseOutputBuffer(outputIndex, false)
+                            if (
+                                bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                            ) {
+                                outputDone = true
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            releaseResources()
+        }
+    }
+
+    private fun audioPresentationTimeUs(recordingStartedAtElapsedRealtime: Long): Long {
+        return (SystemClock.elapsedRealtime() - recordingStartedAtElapsedRealtime)
+            .coerceAtLeast(0L) * 1_000L
+    }
+
+    private fun releaseResources() {
+        runCatching { audioRecord?.stop() }
+        runCatching { audioRecord?.release() }
+        audioRecord = null
+        if (encoderStarted) {
+            runCatching { encoder?.stop() }
+        }
+        runCatching { encoder?.release() }
+        encoder = null
+        if (muxerStarted) {
+            audioFileReady = runCatching {
+                muxer?.stop()
+                true
+            }.getOrDefault(false)
+        }
+        runCatching { muxer?.release() }
+        muxer = null
+        if (!audioFileReady) {
+            outputFile.delete()
+        }
+        muxerStarted = false
+        encoderStarted = false
+        audioTrackIndex = -1
     }
 }
 
