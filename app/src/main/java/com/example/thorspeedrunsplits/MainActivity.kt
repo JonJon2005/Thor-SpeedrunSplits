@@ -1407,7 +1407,7 @@ private fun ThorSpeedrunSplitsApp() {
                         .height(titleHeight)
                         .padding(
                             start = 24.dp,
-                            end = if (isWideThorShape) 152.dp else 24.dp
+                            end = 84.dp
                         )
                 )
                 SplitList(
@@ -2106,7 +2106,7 @@ private fun ThorSpeedrunSplitsApp() {
             ) {
                 SettingsButton(
                     onClick = { isSettingsOpen = true },
-                    modifier = Modifier.size(width = 104.dp, height = 48.dp)
+                    modifier = Modifier.size(48.dp)
                 )
             }
         }
