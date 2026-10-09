@@ -263,9 +263,12 @@ private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
 private const val RecordAudioPreferenceKey = "record_audio"
 private const val RecordingResolutionPreferenceKey = "recording_resolution"
 private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
+private const val RecordingFrameRatePreferenceKey = "recording_frame_rate"
 private const val DefaultRecordingBitrateMbps = 10
 private const val MinRecordingBitrateMbps = 2
 private const val MaxRecordingBitrateMbps = 16
+private const val DefaultRecordingFrameRate = 60
+private const val LowerRecordingFrameRate = 30
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
@@ -1006,6 +1009,7 @@ private fun ThorSpeedrunSplitsApp() {
     var recordAudioEnabled by remember { mutableStateOf(false) }
     var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
     var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
+    var recordingFrameRate by remember { mutableStateOf(DefaultRecordingFrameRate) }
     var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
     var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
     var recordingSessionActive by remember { mutableStateOf(RunRecordingService.isRecording) }
@@ -1111,6 +1115,7 @@ private fun ThorSpeedrunSplitsApp() {
                 resolutionWidth = selectedResolution.width,
                 resolutionHeight = selectedResolution.height,
                 bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000,
+                frameRate = recordingFrameRate,
                 recordAudio = recordAudioEnabled
             )
             recordingSessionActive = true
@@ -1510,6 +1515,11 @@ private fun ThorSpeedrunSplitsApp() {
             ?.toIntOrNull()
             ?.coerceIn(MinRecordingBitrateMbps, MaxRecordingBitrateMbps)
             ?: DefaultRecordingBitrateMbps
+        recordingFrameRate = appPreferenceDao
+            .getValue(RecordingFrameRatePreferenceKey)
+            ?.toIntOrNull()
+            ?.takeIf { it == LowerRecordingFrameRate || it == DefaultRecordingFrameRate }
+            ?: DefaultRecordingFrameRate
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -2001,6 +2011,7 @@ private fun ThorSpeedrunSplitsApp() {
                     recordingResolution = recordingResolution
                         ?: availableRecordingResolutions.last(),
                     recordingBitrateMbps = recordingBitrateMbps,
+                    recordingFrameRate = recordingFrameRate,
                     recordAudioEnabled = recordAudioEnabled,
                     recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                     onRecordOppositeScreenChange = { enabled ->
@@ -2044,6 +2055,21 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = RecordingBitratePreferenceKey,
                                     value = normalizedMbps.toString()
+                                )
+                            )
+                        }
+                    },
+                    onRecordingFrameRateChange = { frameRate ->
+                        val normalizedFrameRate = when (frameRate) {
+                            LowerRecordingFrameRate -> LowerRecordingFrameRate
+                            else -> DefaultRecordingFrameRate
+                        }
+                        recordingFrameRate = normalizedFrameRate
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingFrameRatePreferenceKey,
+                                    value = normalizedFrameRate.toString()
                                 )
                             )
                         }
@@ -3077,11 +3103,13 @@ private fun SettingsPanel(
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordingFrameRateChange: (Int) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseRecordingFolder: () -> Unit,
     onUseDefaultRecordingFolder: () -> Unit,
@@ -3241,11 +3269,13 @@ private fun SettingsPanel(
                         availableRecordingResolutions = availableRecordingResolutions,
                         recordingResolution = recordingResolution,
                         recordingBitrateMbps = recordingBitrateMbps,
+                        recordingFrameRate = recordingFrameRate,
                         recordAudioEnabled = recordAudioEnabled,
                         recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                         onRecordOppositeScreenChange = onRecordOppositeScreenChange,
                         onRecordingResolutionChange = onRecordingResolutionChange,
                         onRecordingBitrateChange = onRecordingBitrateChange,
+                        onRecordingFrameRateChange = onRecordingFrameRateChange,
                         onRecordAudioChange = onRecordAudioChange,
                         onChooseFolder = onChooseRecordingFolder,
                         onUseDefaultFolder = onUseDefaultRecordingFolder
@@ -4439,11 +4469,13 @@ private fun RecordingSettingsPanel(
     availableRecordingResolutions: List<RecordingResolution>,
     recordingResolution: RecordingResolution,
     recordingBitrateMbps: Int,
+    recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
+    onRecordingFrameRateChange: (Int) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseFolder: () -> Unit,
     onUseDefaultFolder: () -> Unit
@@ -4604,6 +4636,38 @@ private fun RecordingSettingsPanel(
             fontSize = 11.sp
         )
     }
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "Frame rate: ${recordingFrameRate} FPS",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = if (recordingFrameRate == LowerRecordingFrameRate) 0f else 1f,
+        onValueChange = { value ->
+            onRecordingFrameRateChange(
+                if (value < 0.5f) LowerRecordingFrameRate else DefaultRecordingFrameRate
+            )
+        },
+        valueRange = 0f..1f,
+        steps = 0,
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${LowerRecordingFrameRate} FPS",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "${DefaultRecordingFrameRate} FPS",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
     Spacer(modifier = Modifier.height(8.dp))
     Text(
         text = "These controls apply to the next recording and are independent of each other.",
@@ -4613,7 +4677,7 @@ private fun RecordingSettingsPanel(
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text = "Lower resolution or bitrate saves storage space but reduces video quality.",
+        text = "Lower resolution, frame rate, or bitrate saves storage space but reduces video quality.",
         color = SecondaryText,
         fontSize = 12.sp,
         lineHeight = 15.sp

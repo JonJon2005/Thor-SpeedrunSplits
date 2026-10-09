@@ -28,7 +28,7 @@ You can add it to <b>Obtainium</b> here:
 - Automatic GitHub release checks with an in-app `Update Now` link, About links, version display, and internal/external display status for dual-screen devices.
 - Run recording of Android's internal/default display: starts with a run, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder using the preset game, category, run length, and date.
 - Optional opposite-screen recording target and internal playback-audio capture (device playback, not microphone input), plus a flashing red recording indicator while capture is active.
-- Independent recording controls for 240p, 480p, 720p, or 1080p resolution and 2–16 Mbps bitrate; settings apply at capture time and recordings remain 60 FPS.
+- Independent recording controls for 240p, 480p, 720p, or 1080p resolution, 2–16 Mbps bitrate, and an enforced 30 or 60 FPS capture cap; settings apply directly at capture time.
 - Immersive fullscreen layout optimized for the AYN Thor's 1080x1240 AMOLED display, with large targets, long-title handling, and dual-screen-aware display labeling.
 
 ## Screenshots

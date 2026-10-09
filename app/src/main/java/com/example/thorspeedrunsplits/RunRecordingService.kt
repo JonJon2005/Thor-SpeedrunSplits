@@ -17,7 +17,6 @@ import android.media.AudioPlaybackCaptureConfiguration
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
-import android.media.MediaRecorder
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.projection.MediaProjection
@@ -33,6 +32,7 @@ import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.util.DisplayMetrics
 import android.view.Display
+import android.view.Surface
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.nio.ByteBuffer
@@ -46,7 +46,7 @@ class RunRecordingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
-    private var mediaRecorder: MediaRecorder? = null
+    private var videoEncoder: ScreenVideoEncoder? = null
     private var outputFile: File? = null
     private var outputDocumentUri: Uri? = null
     private var outputFileDescriptor: ParcelFileDescriptor? = null
@@ -92,7 +92,7 @@ class RunRecordingService : Service() {
 
     private fun startRecording(intent: Intent) {
         mainHandler.removeCallbacks(delayedStop)
-        if (mediaRecorder != null || mediaProjection != null) {
+        if (videoEncoder != null || mediaProjection != null) {
             stopRecording(requestedRunLengthMillis ?: elapsedRecordingMillis(), stopService = false)
         }
 
@@ -129,6 +129,16 @@ class RunRecordingService : Service() {
                 EXTRA_BITRATE_BITS_PER_SECOND,
                 DEFAULT_BITRATE_BITS_PER_SECOND
             ).coerceIn(MIN_BITRATE_BITS_PER_SECOND, MAX_BITRATE_BITS_PER_SECOND)
+            val frameRate = intent.getIntExtra(
+                EXTRA_FRAME_RATE,
+                DEFAULT_FRAME_RATE
+            ).let { requestedFrameRate ->
+                if (requestedFrameRate == LOWER_FRAME_RATE) {
+                    LOWER_FRAME_RATE
+                } else {
+                    DEFAULT_FRAME_RATE
+                }
+            }
             val (width, height) = fitResolutionToDisplay(
                 requestedWidth = resolutionWidth,
                 requestedHeight = resolutionHeight,
@@ -139,25 +149,32 @@ class RunRecordingService : Service() {
                 folderUriString = intent.getStringExtra(EXTRA_FOLDER_URI),
                 recordAudio = recordAudioEnabled
             )
-            val recorder = createRecorder(width, height, bitrateBitsPerSecond)
-            mediaRecorder = recorder
+            val encoder = ScreenVideoEncoder(
+                outputFile = outputFile,
+                outputFileDescriptor = outputFileDescriptor,
+                width = width,
+                height = height,
+                bitrateBitsPerSecond = bitrateBitsPerSecond,
+                frameRate = frameRate
+            )
+            videoEncoder = encoder
 
             val manager = getSystemService(MediaProjectionManager::class.java)
             val projection = manager.getMediaProjection(Activity.RESULT_OK, projectionData)
                 ?: error("Screen capture permission is unavailable.")
             mediaProjection = projection
             projection.registerCallback(projectionCallback, mainHandler)
+            encoder.start()
             virtualDisplay = projection.createVirtualDisplay(
                 "ThorSpeedrunRunRecording",
                 width,
                 height,
                 metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                recorder.surface,
+                encoder.inputSurface,
                 null,
                 mainHandler
             )
-            recorder.start()
             recordingStartedAt = SystemClock.elapsedRealtime()
             if (recordAudioEnabled) {
                 playbackAudioCapture = PlaybackAudioCapture(
@@ -174,36 +191,13 @@ class RunRecordingService : Service() {
     }
 
     private fun scheduleStop(runLengthMillis: Long) {
-        if (mediaRecorder == null && mediaProjection == null) {
+        if (videoEncoder == null && mediaProjection == null) {
             stopSelf()
             return
         }
         requestedRunLengthMillis = runLengthMillis.coerceAtLeast(0L)
         mainHandler.removeCallbacks(delayedStop)
         mainHandler.postDelayed(delayedStop, RECORDING_TAIL_MILLIS)
-    }
-
-    private fun createRecorder(
-        width: Int,
-        height: Int,
-        bitrateBitsPerSecond: Int
-    ): MediaRecorder {
-        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(this)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }
-        recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        outputFileDescriptor?.let { recorder.setOutputFile(it.fileDescriptor) }
-            ?: recorder.setOutputFile(requireNotNull(outputFile).absolutePath)
-        recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        recorder.setVideoSize(width, height)
-        recorder.setVideoFrameRate(60)
-        recorder.setVideoEncodingBitRate(bitrateBitsPerSecond)
-        recorder.prepare()
-        return recorder
     }
 
     private fun prepareOutput(folderUriString: String?, recordAudio: Boolean) {
@@ -252,16 +246,14 @@ class RunRecordingService : Service() {
         isCleaningUp = true
         mainHandler.removeCallbacks(delayedStop)
 
-        val recorder = mediaRecorder
-        mediaRecorder = null
-        runCatching { playbackAudioCapture?.stop() }
-        playbackAudioCapture = null
-        runCatching { recorder?.stop() }
-            .onFailure { discardOutput() }
-        runCatching { recorder?.reset() }
-        runCatching { recorder?.release() }
         virtualDisplay?.release()
         virtualDisplay = null
+        val encoder = videoEncoder
+        videoEncoder = null
+        runCatching { playbackAudioCapture?.stop() }
+        playbackAudioCapture = null
+        runCatching { encoder?.stop() }
+            .onFailure { discardOutput() }
         val projection = mediaProjection
         mediaProjection = null
         runCatching { projection?.unregisterCallback(projectionCallback) }
@@ -552,6 +544,7 @@ class RunRecordingService : Service() {
         private const val EXTRA_RESOLUTION_WIDTH = "resolution_width"
         private const val EXTRA_RESOLUTION_HEIGHT = "resolution_height"
         private const val EXTRA_BITRATE_BITS_PER_SECOND = "bitrate_bits_per_second"
+        private const val EXTRA_FRAME_RATE = "frame_rate"
         private const val EXTRA_RECORD_AUDIO = "record_audio"
         private const val EXTRA_RUN_LENGTH_MILLIS = "run_length_millis"
         private const val NOTIFICATION_CHANNEL_ID = "run_recording"
@@ -560,6 +553,8 @@ class RunRecordingService : Service() {
         private const val DEFAULT_BITRATE_BITS_PER_SECOND = 10_000_000
         private const val MIN_BITRATE_BITS_PER_SECOND = 2_000_000
         private const val MAX_BITRATE_BITS_PER_SECOND = 16_000_000
+        private const val DEFAULT_FRAME_RATE = 60
+        private const val LOWER_FRAME_RATE = 30
 
         fun start(
             context: Context,
@@ -570,6 +565,7 @@ class RunRecordingService : Service() {
             resolutionWidth: Int,
             resolutionHeight: Int,
             bitrateBitsPerSecond: Int,
+            frameRate: Int,
             recordAudio: Boolean
         ) {
             val intent = Intent(context, RunRecordingService::class.java).apply {
@@ -581,6 +577,7 @@ class RunRecordingService : Service() {
                 putExtra(EXTRA_RESOLUTION_WIDTH, resolutionWidth)
                 putExtra(EXTRA_RESOLUTION_HEIGHT, resolutionHeight)
                 putExtra(EXTRA_BITRATE_BITS_PER_SECOND, bitrateBitsPerSecond)
+                putExtra(EXTRA_FRAME_RATE, frameRate)
                 putExtra(EXTRA_RECORD_AUDIO, recordAudio)
             }
             ContextCompat.startForegroundService(context, intent)
@@ -594,6 +591,126 @@ class RunRecordingService : Service() {
                 }
             )
         }
+    }
+}
+
+private class ScreenVideoEncoder(
+    outputFile: File?,
+    outputFileDescriptor: ParcelFileDescriptor?,
+    width: Int,
+    height: Int,
+    bitrateBitsPerSecond: Int,
+    frameRate: Int
+) {
+    private val bufferInfo = MediaCodec.BufferInfo()
+    private val stopRequested = AtomicBoolean(false)
+    private var muxerStarted = false
+    private var videoTrackIndex = -1
+    private var worker: Thread? = null
+    private var workerFailure: Throwable? = null
+    private var started = false
+
+    private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
+        val format = MediaFormat.createVideoFormat(
+            MediaFormat.MIMETYPE_VIDEO_AVC,
+            width,
+            height
+        ).apply {
+            setInteger(
+                MediaFormat.KEY_COLOR_FORMAT,
+                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+            )
+            setInteger(MediaFormat.KEY_BIT_RATE, bitrateBitsPerSecond)
+            setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
+            setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, frameRate.toFloat())
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+        configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+    }
+
+    val inputSurface: Surface = codec.createInputSurface()
+    private val muxer = outputFileDescriptor?.let {
+        MediaMuxer(it.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    } ?: MediaMuxer(
+        requireNotNull(outputFile).absolutePath,
+        MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+    )
+
+    fun start() {
+        codec.start()
+        started = true
+        worker = Thread(::drainOutput, "ThorSpeedrunVideoEncoder").also { it.start() }
+    }
+
+    fun stop() {
+        if (!started) {
+            release()
+            return
+        }
+        stopRequested.set(true)
+        worker?.join(10_000L)
+        if (worker?.isAlive == true) {
+            release()
+            error("Timed out while finalizing the video encoder.")
+        }
+        workerFailure?.let { failure ->
+            release()
+            throw failure
+        }
+        release()
+    }
+
+    private fun drainOutput() {
+        var inputEnded = false
+        try {
+            while (true) {
+                if (stopRequested.get() && !inputEnded) {
+                    codec.signalEndOfInputStream()
+                    inputEnded = true
+                }
+                when (val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10_000L)) {
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        check(!muxerStarted) { "Video muxer format changed twice." }
+                        videoTrackIndex = muxer.addTrack(codec.outputFormat)
+                        muxer.start()
+                        muxerStarted = true
+                    }
+                    else -> if (outputIndex >= 0) {
+                        val outputBuffer = codec.getOutputBuffer(outputIndex)
+                            ?: error("Video encoder output buffer is unavailable.")
+                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                            bufferInfo.size = 0
+                        }
+                        if (bufferInfo.size > 0) {
+                            check(muxerStarted && videoTrackIndex >= 0) {
+                                "Video encoder emitted samples before its output format."
+                            }
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo)
+                        }
+                        val reachedEnd =
+                            bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        codec.releaseOutputBuffer(outputIndex, false)
+                        if (reachedEnd) return
+                    }
+                }
+            }
+        } catch (failure: Throwable) {
+            workerFailure = failure
+        }
+    }
+
+    private fun release() {
+        runCatching {
+            if (muxerStarted) muxer.stop()
+        }
+        runCatching { muxer.release() }
+        runCatching { inputSurface.release() }
+        runCatching { codec.stop() }
+        runCatching { codec.release() }
+        started = false
     }
 }
 
