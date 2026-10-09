@@ -20,6 +20,7 @@ You can add it to <b>Obtainium</b> here:
 
 - LiveSplit-style timer with color-coded split rows, one-decimal formatting, PB comparisons, live ahead/behind deltas, golds/best segments, automatic active-row scrolling, and manual scroll-back.
 - Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with haptics, pressed states, and subtle animations; RESET requires a visible half-second hold by default to avoid accidental resets, with an optional quick-tap setting.
+- Live overall and current-segment timers on the home screen, so each split's duration is visible while the run is in progress.
 - Optional inverted bottom layout places timer and run stats on the left with the SPLIT, UNDO, and RESET controls on the right.
 - Persistent PBs, Sum of Best, attempts, total run time, completed-run history, run details, PB dates, gold management, and largest segment gain/loss reporting.
 - Custom Room-backed presets with editable game/category, split names, colors, order, and row count; load, create, edit, delete, reset, and compatible PB-preserving updates.

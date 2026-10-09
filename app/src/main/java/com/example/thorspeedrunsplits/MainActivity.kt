@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1602,6 +1603,12 @@ private fun ThorSpeedrunSplitsApp() {
         isFinished -> finishedElapsedMillis
         else -> 0L
     }
+    val currentSegmentElapsedMillis = when {
+        isRunning -> elapsedMillis - (completedTimes.getOrNull(activeSplitIndex - 1) ?: 0L)
+        isFinished -> finishedElapsedMillis -
+            (completedTimes.getOrNull(activePreset.segments.lastIndex - 1) ?: 0L)
+        else -> 0L
+    }.coerceAtLeast(0L)
     val savedRunForActivePreset = savedRuns[activePreset.presetName]
         ?.takeIf { it.splitTimes.size == activePreset.segments.size }
     val displayedComparisonRun = runComparison ?: savedRunForActivePreset
@@ -1727,6 +1734,7 @@ private fun ThorSpeedrunSplitsApp() {
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
                     timerText = formatSeconds(elapsedMillis),
+                    segmentTimerText = formatSeconds(currentSegmentElapsedMillis),
                     timerColor = timerTextColor,
                     timerSize = timerSize,
                     modifier = Modifier
@@ -2695,6 +2703,7 @@ private fun PresetStatsPanel(
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
+    segmentTimerText: String,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -2722,6 +2731,14 @@ private fun PresetStatsPanel(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "Total $totalTimeText",
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 13.sp,
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Segment $segmentTimerText",
             color = SecondaryText,
             fontSize = 13.sp,
             lineHeight = 13.sp,
@@ -2922,6 +2939,7 @@ private fun BottomControls(
     attemptedRuns: Int,
     totalTimeText: String,
     timerText: String,
+    segmentTimerText: String,
     timerColor: Color,
     timerSize: TextUnit,
     onSplit: () -> Unit,
@@ -2939,6 +2957,7 @@ private fun BottomControls(
                 attemptedRuns = attemptedRuns,
                 totalTimeText = totalTimeText,
                 timerText = timerText,
+                segmentTimerText = segmentTimerText,
                 timerColor = timerColor,
                 timerSize = timerSize,
                 alignment = Alignment.Start
@@ -2987,6 +3006,7 @@ private fun BottomControls(
                 attemptedRuns = attemptedRuns,
                 totalTimeText = totalTimeText,
                 timerText = timerText,
+                segmentTimerText = segmentTimerText,
                 timerColor = timerColor,
                 timerSize = timerSize,
                 alignment = Alignment.End
@@ -3052,18 +3072,21 @@ private fun RunTimerAndStats(
     attemptedRuns: Int,
     totalTimeText: String,
     timerText: String,
+    segmentTimerText: String,
     timerColor: Color,
     timerSize: TextUnit,
     alignment: Alignment.Horizontal
 ) {
     Column(
         horizontalAlignment = alignment,
-        verticalArrangement = Arrangement.Bottom
+        verticalArrangement = Arrangement.Bottom,
+        modifier = Modifier.offset(y = 3.dp)
     ) {
         PresetStatsPanel(
             sumOfBestText = sumOfBestText,
             attemptedRuns = attemptedRuns,
-            totalTimeText = totalTimeText
+            totalTimeText = totalTimeText,
+            segmentTimerText = segmentTimerText
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
