@@ -322,3 +322,6 @@ Change Log
 - 2026-10-09: Moved the Settings title/update header into the scrollable content so it scrolls away and frees the full display height; the close button remains fixed at the top-right.
 - 2026-10-09: Redesigned Settings around a persistent left sidebar with Customization, Presets, Runs & Records, Backup & Data, and About sections; retained local Create/Edit and Records/History subviews, kept the close button fixed, and replaced boolean text buttons with visual toggle switches.
 - 2026-10-09: Replaced the persistent Settings sidebar with a collapsible left drawer based on the provided reference: a sticky top header holds the hamburger, active section title, and close control; selecting a drawer section closes it so narrower Thor displays regain the full content width.
+- 2026-10-09: Added About links to the GitHub repository and creator Jonathan Gallo's website at jonathangallo.dev.
+- 2026-10-09: Added native Android Material icons to every Settings drawer destination, section headings, and key actions including preset creation/saving, reset, backup/import, record clearing, run details, and back navigation.
+- 2026-10-09: Compacted the sticky Settings section header from 104dp to 76dp with smaller typography and 46dp menu/close controls to reclaim vertical content space without sacrificing touch accessibility.

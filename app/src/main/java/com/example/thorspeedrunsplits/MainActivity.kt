@@ -48,11 +48,23 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Switch
@@ -217,6 +229,9 @@ private const val FontPreferenceKey = "font_mode"
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
+private const val GitHubRepositoryUrl =
+    "https://github.com/JonJon2005/Thor-SpeedrunSplits"
+private const val CreatorWebsiteUrl = "https://jonathangallo.dev"
 private const val UntimedSplitSentinel = -1L
 
 private val OledScreenShiftPattern = listOf(
@@ -2112,6 +2127,15 @@ private enum class SettingsSection(val label: String) {
     About("About")
 }
 
+private val SettingsSection.icon: ImageVector
+    get() = when (this) {
+        SettingsSection.Customization -> Icons.Filled.Settings
+        SettingsSection.Presets -> Icons.AutoMirrored.Filled.List
+        SettingsSection.Runs -> Icons.Filled.DateRange
+        SettingsSection.Data -> Icons.Filled.Share
+        SettingsSection.About -> Icons.Filled.Info
+    }
+
 private enum class PresetSettingsView {
     Create,
     Edit
@@ -2738,7 +2762,7 @@ private fun SettingsPanel(
                 ) {
             if (selectedSection == SettingsSection.Customization) {
                 item {
-                SettingsSectionTitle("Appearance")
+                SettingsSectionTitle("Appearance", Icons.Filled.Settings)
                 ThemeModeToggle(
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
@@ -2760,7 +2784,7 @@ private fun SettingsPanel(
                 }
             } else if (selectedSection == SettingsSection.Presets) {
                 item {
-                SettingsSectionTitle("Saved Presets")
+                SettingsSectionTitle("Saved Presets", Icons.AutoMirrored.Filled.List)
                 savedPresets.forEach { preset ->
                     PresetLoadRow(
                         preset = preset,
@@ -2801,7 +2825,7 @@ private fun SettingsPanel(
                 selectedPresetView == PresetSettingsView.Create
             ) {
                 item {
-                    SettingsSectionTitle("Create New")
+                    SettingsSectionTitle("Create New", Icons.Filled.Add)
                     LabeledTextInput(
                         label = "Preset Name",
                         value = draftPresetName,
@@ -2844,19 +2868,22 @@ private fun SettingsPanel(
                         PanelTextButton(
                             text = "ADD ROW",
                             onClick = onAddDraftSegment,
-                            modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Add,
+                            modifier = Modifier.size(width = 112.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
                             text = "SAVE PRESET",
                             onClick = onSaveDraftPreset,
-                            modifier = Modifier.size(width = 138.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Check,
+                            modifier = Modifier.size(width = 150.dp, height = 40.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         PanelTextButton(
                             text = "RESET TO DEFAULT",
                             onClick = onResetDefault,
-                            modifier = Modifier.size(width = 148.dp, height = 40.dp)
+                            imageVector = Icons.Filled.Refresh,
+                            modifier = Modifier.size(width = 178.dp, height = 40.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(22.dp))
@@ -2865,7 +2892,7 @@ private fun SettingsPanel(
                 selectedPresetView == PresetSettingsView.Edit
             ) {
                 item {
-                    SettingsSectionTitle("Edit Selected")
+                    SettingsSectionTitle("Edit Selected", Icons.Filled.Edit)
                     if (editTargetPresetName == null) {
                         Text(
                             text = "Choose EDIT on a custom preset.",
@@ -2923,13 +2950,15 @@ private fun SettingsPanel(
                             PanelTextButton(
                                 text = "ADD ROW",
                                 onClick = onAddEditSegment,
-                                modifier = Modifier.size(width = 96.dp, height = 40.dp)
+                                imageVector = Icons.Filled.Add,
+                                modifier = Modifier.size(width = 112.dp, height = 40.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             PanelTextButton(
                                 text = "SAVE CHANGES",
                                 onClick = onSaveEditedPreset,
-                                modifier = Modifier.size(width = 126.dp, height = 40.dp)
+                                imageVector = Icons.Filled.Check,
+                                modifier = Modifier.size(width = 150.dp, height = 40.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
@@ -3039,6 +3068,7 @@ private fun SettingsPanel(
                                 selectedBackupPresetNames = availableBackupPresetNames.toSet()
                             },
                             enabled = !isBusy,
+                            imageVector = Icons.Filled.Check,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(40.dp)
@@ -3059,6 +3089,7 @@ private fun SettingsPanel(
                             text = "BACKUP",
                             onClick = { onRequestBackup(selectedBackupPresetNames) },
                             enabled = selectedBackupPresetNames.isNotEmpty() && !isBusy,
+                            imageVector = Icons.Filled.Share,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
@@ -3068,6 +3099,7 @@ private fun SettingsPanel(
                             text = "IMPORT",
                             onClick = onRequestBackupImport,
                             enabled = !isBusy,
+                            imageVector = Icons.Filled.Add,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
@@ -3139,7 +3171,7 @@ private fun RecordsPanel(
     val hasPersonalBest = matchingPersonalBest != null
     val hasBestSegments = matchingBestSegments?.segmentTimes?.any { it != null } == true
 
-    SettingsSectionTitle("Records")
+    SettingsSectionTitle("Records", Icons.Filled.Star)
     Text(
         text = "${preset.gameTitle} - ${preset.category}",
         color = SuccessGreen,
@@ -3173,14 +3205,16 @@ private fun RecordsPanel(
             text = "CLEAR PB",
             onClick = onClearPersonalBest,
             enabled = hasPersonalBest,
-            modifier = Modifier.size(width = 112.dp, height = 40.dp)
+            imageVector = Icons.Filled.Delete,
+            modifier = Modifier.size(width = 132.dp, height = 40.dp)
         )
         Spacer(modifier = Modifier.width(10.dp))
         PanelTextButton(
             text = "CLEAR GOLDS",
             onClick = onClearBestSegments,
             enabled = hasBestSegments,
-            modifier = Modifier.size(width = 126.dp, height = 40.dp)
+            imageVector = Icons.Filled.Delete,
+            modifier = Modifier.size(width = 148.dp, height = 40.dp)
         )
     }
     Spacer(modifier = Modifier.height(12.dp))
@@ -3311,7 +3345,7 @@ private fun HistoryHeader(
     preset: SplitPreset,
     completedRunCount: Int
 ) {
-    SettingsSectionTitle("Run History")
+    SettingsSectionTitle("Run History", Icons.Filled.DateRange)
     Text(
         text = "${preset.gameTitle} - ${preset.category}",
         color = SuccessGreen,
@@ -3387,7 +3421,8 @@ private fun HistoricalRunRow(
         PanelTextButton(
             text = "DETAILS",
             onClick = onOpenDetails,
-            modifier = Modifier.size(width = 78.dp, height = 36.dp)
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            modifier = Modifier.size(width = 100.dp, height = 36.dp)
         )
     }
     Spacer(modifier = Modifier.height(6.dp))
@@ -3405,7 +3440,8 @@ private fun HistoricalRunDetailsHeader(
         PanelTextButton(
             text = "BACK",
             onClick = onBack,
-            modifier = Modifier.size(width = 72.dp, height = 38.dp)
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            modifier = Modifier.size(width = 92.dp, height = 38.dp)
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -3607,7 +3643,7 @@ private fun BackupHeader(
     backupExportState: BackupExportState,
     backupImportState: BackupImportState
 ) {
-    SettingsSectionTitle("Backup / Import")
+    SettingsSectionTitle("Backup / Import", Icons.Filled.Share)
     Text(
         text = "Back up or restore presets",
         color = PrimaryText,
@@ -3742,41 +3778,41 @@ private fun SettingsStickyHeader(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .height(104.dp)
+            .height(76.dp)
             .background(RowBlack)
             .border(width = 0.5.dp, color = DividerColor)
-            .padding(horizontal = 14.dp)
+            .padding(horizontal = 12.dp)
     ) {
         PanelIconButton(
             imageVector = Icons.Filled.Menu,
             contentDescription = "Open settings sections",
             onClick = onOpenNavigation,
-            modifier = Modifier.size(52.dp)
+            modifier = Modifier.size(46.dp)
         )
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = selectedSection.label,
                 color = PrimaryText,
-                fontSize = 23.sp,
-                lineHeight = 23.sp,
+                fontSize = 20.sp,
+                lineHeight = 20.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(7.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = settingsSectionDescription(selectedSection),
                 color = SecondaryText,
-                fontSize = 13.sp,
-                lineHeight = 13.sp,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(12.dp))
         CloseButton(
             onClick = onClose,
-            modifier = Modifier.size(52.dp)
+            modifier = Modifier.size(46.dp)
         )
     }
 }
@@ -3805,6 +3841,7 @@ private fun SettingsSidebar(
         SettingsSection.entries.forEach { section ->
             SettingsSidebarButton(
                 text = section.label,
+                imageVector = section.icon,
                 selected = selectedSection == section,
                 onClick = { onSelectedSectionChange(section) },
                 modifier = Modifier
@@ -3828,6 +3865,7 @@ private fun SettingsSidebar(
 @Composable
 private fun SettingsSidebarButton(
     text: String,
+    imageVector: ImageVector,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -3845,8 +3883,8 @@ private fun SettingsSidebarButton(
         label = "settingsSidebarBackground"
     )
 
-    Box(
-        contentAlignment = Alignment.CenterStart,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .background(backgroundColor)
             .border(
@@ -3863,6 +3901,13 @@ private fun SettingsSidebarButton(
             )
             .padding(horizontal = 12.dp)
     ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = null,
+            tint = if (selected) PrimaryText else SecondaryText,
+            modifier = Modifier.size(21.dp)
+        )
+        Spacer(modifier = Modifier.width(11.dp))
         Text(
             text = text,
             color = if (selected) PrimaryText else SecondaryText,
@@ -3939,7 +3984,7 @@ private fun AboutSettingsPanel(
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit
 ) {
-    SettingsSectionTitle("Thor Speedrun Splits")
+    SettingsSectionTitle("Thor Speedrun Splits", Icons.Filled.Info)
     Text(
         text = "Version ${BuildConfig.VERSION_NAME}",
         color = PrimaryText,
@@ -3959,6 +4004,34 @@ private fun AboutSettingsPanel(
         fontSize = 14.sp,
         lineHeight = 18.sp
     )
+    Spacer(modifier = Modifier.height(20.dp))
+    Text(
+        text = "View GitHub Repository",
+        color = LinkBlue,
+        fontSize = 14.sp,
+        lineHeight = 14.sp,
+        fontFamily = FontFamily.Default,
+        textDecoration = TextDecoration.Underline,
+        modifier = Modifier.clickable { onOpenRelease(GitHubRepositoryUrl) }
+    )
+    Spacer(modifier = Modifier.height(14.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "Made by ",
+            color = SecondaryText,
+            fontSize = 14.sp,
+            lineHeight = 14.sp
+        )
+        Text(
+            text = "Jonathan Gallo",
+            color = LinkBlue,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            fontFamily = FontFamily.Default,
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable { onOpenRelease(CreatorWebsiteUrl) }
+        )
+    }
 }
 
 @Composable
@@ -4224,14 +4297,28 @@ private fun SettingsTabButton(
 }
 
 @Composable
-private fun SettingsSectionTitle(text: String) {
-    Text(
-        text = text,
-        color = SecondaryText,
-        fontSize = 16.sp,
-        lineHeight = 16.sp,
-        maxLines = 1
-    )
+private fun SettingsSectionTitle(
+    text: String,
+    imageVector: ImageVector? = null
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (imageVector != null) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = null,
+                tint = SecondaryText,
+                modifier = Modifier.size(19.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(
+            text = text,
+            color = SecondaryText,
+            fontSize = 16.sp,
+            lineHeight = 16.sp,
+            maxLines = 1
+        )
+    }
     Spacer(modifier = Modifier.height(8.dp))
 }
 
@@ -4466,6 +4553,7 @@ private fun PanelTextButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    imageVector: ImageVector? = null,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -4490,8 +4578,9 @@ private fun PanelTextButton(
         label = "panelButtonBorder"
     )
 
-    Box(
-        contentAlignment = Alignment.Center,
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .background(backgroundColor)
             .border(width = 1.5.dp, color = borderColor)
@@ -4506,6 +4595,15 @@ private fun PanelTextButton(
             )
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
+        if (imageVector != null) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = null,
+                tint = if (enabled) PrimaryText else SecondaryText,
+                modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+        }
         FadingButtonText(
             text = text,
             color = if (enabled) PrimaryText else SecondaryText,
