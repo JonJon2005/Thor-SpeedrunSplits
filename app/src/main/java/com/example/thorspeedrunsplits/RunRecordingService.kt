@@ -41,9 +41,14 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class RunRecordingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val finalizationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var videoEncoder: ScreenVideoEncoder? = null
@@ -58,8 +63,16 @@ class RunRecordingService : Service() {
     private var category = "Any%"
     private var recordingStartedAt = 0L
     private var isCleaningUp = false
+    private var pendingFinalizations = 0
     private var requestedRunLengthMillis: Long? = null
     private var saveOutputOnStop = true
+
+    private data class RecordingOutput(
+        val videoFile: File?,
+        val documentUri: Uri?,
+        val audioFile: File?,
+        val containsAudio: Boolean
+    )
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -254,6 +267,14 @@ class RunRecordingService : Service() {
 
     private fun stopRecording(runLengthMillis: Long, stopService: Boolean = true) {
         if (isCleaningUp) return
+        if (videoEncoder == null && mediaProjection == null) {
+            if (pendingFinalizations > 0) return
+            if (stopService) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+            return
+        }
         isCleaningUp = true
         mainHandler.removeCallbacks(delayedStop)
 
@@ -270,11 +291,16 @@ class RunRecordingService : Service() {
         runCatching { projection?.stop() }
         outputFileDescriptor?.close()
         outputFileDescriptor = null
-
-        if (encoderStopped && saveOutputOnStop) {
-            finalizeOutputName(runLengthMillis)
+        val output = takeOutput()
+        val finalName = if (encoderStopped && saveOutputOnStop) {
+            buildRecordingFileName(
+                gameName = gameName,
+                category = category,
+                runLengthMillis = runLengthMillis,
+                completedAtMillis = System.currentTimeMillis()
+            )
         } else {
-            discardOutput()
+            null
         }
         recordingStartedAt = 0L
         requestedRunLengthMillis = null
@@ -282,66 +308,93 @@ class RunRecordingService : Service() {
         isRecording = false
         broadcastRecordingState(active = false)
         isCleaningUp = false
-        if (stopService) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+
+        // Remuxing and copying can take several seconds for long runs. Keep that I/O off
+        // the main thread while retaining the foreground service until it completes.
+        pendingFinalizations += 1
+        finalizationScope.launch {
+            try {
+                if (finalName != null) {
+                    finalizeOutputName(output, finalName)
+                } else {
+                    discardOutput(output)
+                }
+            } catch (_: Exception) {
+                discardOutput(output)
+            } finally {
+                mainHandler.post {
+                    pendingFinalizations -= 1
+                    if (
+                        stopService &&
+                        pendingFinalizations == 0 &&
+                        videoEncoder == null &&
+                        mediaProjection == null
+                    ) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
+                }
+            }
         }
     }
 
-    private fun finalizeOutputName(runLengthMillis: Long) {
-        val finalName = buildRecordingFileName(
-            gameName = gameName,
-            category = category,
-            runLengthMillis = runLengthMillis,
-            completedAtMillis = System.currentTimeMillis()
-        )
-        if (recordAudioEnabled) {
-            val videoFile = outputFile
-            val audioFile = audioOutputFile
+    private fun finalizeOutputName(output: RecordingOutput, finalName: String) {
+        if (output.containsAudio) {
+            val videoFile = output.videoFile
+            val audioFile = output.audioFile
             val muxedFile = if (videoFile != null && audioFile != null) {
                 muxAudioIntoVideo(videoFile, audioFile)
             } else {
                 null
             }
             if (muxedFile != null) {
-                writeMuxedOutput(muxedFile, finalName)
+                writeMuxedOutput(muxedFile, output.documentUri, finalName)
                 muxedFile.delete()
             } else {
-                discardOutput()
+                discardOutput(output)
             }
-            outputFile?.delete()
-            audioOutputFile?.delete()
-            outputFile = null
-            outputDocumentUri = null
-            audioOutputFile = null
+            output.videoFile?.delete()
+            output.audioFile?.delete()
             return
         }
-        outputFile?.let { temporaryFile ->
+        output.videoFile?.let { temporaryFile ->
             if (temporaryFile.exists()) {
                 temporaryFile.renameTo(File(temporaryFile.parentFile, finalName))
             }
         }
-        outputDocumentUri?.let { uri ->
+        output.documentUri?.let { uri ->
             runCatching { DocumentsContract.renameDocument(contentResolver, uri, finalName) }
         }
-        outputFile = null
-        outputDocumentUri = null
     }
 
     private fun discardOutput() {
         runCatching { playbackAudioCapture?.stop() }
         playbackAudioCapture = null
-        outputFile?.delete()
-        audioOutputFile?.delete()
-        outputDocumentUri?.let { uri ->
+        discardOutput(takeOutput())
+    }
+
+    private fun discardOutput(output: RecordingOutput) {
+        output.videoFile?.delete()
+        output.audioFile?.delete()
+        output.documentUri?.let { uri ->
             runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
         }
+    }
+
+    private fun takeOutput(): RecordingOutput {
+        val output = RecordingOutput(
+            videoFile = outputFile,
+            documentUri = outputDocumentUri,
+            audioFile = audioOutputFile,
+            containsAudio = recordAudioEnabled
+        )
         outputFile = null
         outputDocumentUri = null
         outputFileDescriptor?.close()
         outputFileDescriptor = null
         audioOutputFile = null
         recordAudioEnabled = false
+        return output
     }
 
     private fun muxAudioIntoVideo(videoFile: File, audioFile: File): File? {
@@ -449,9 +502,8 @@ class RunRecordingService : Service() {
         extractor.unselectTrack(sourceTrackIndex)
     }
 
-    private fun writeMuxedOutput(muxedFile: File, finalName: String) {
+    private fun writeMuxedOutput(muxedFile: File, documentUri: Uri?, finalName: String) {
         try {
-            val documentUri = outputDocumentUri
             if (documentUri != null) {
                 contentResolver.openOutputStream(documentUri, "wt")?.use { output ->
                     muxedFile.inputStream().use { input -> input.copyTo(output) }
@@ -465,7 +517,9 @@ class RunRecordingService : Service() {
                 muxedFile.copyTo(File(recordingsDirectory, finalName), overwrite = true)
             }
         } catch (_: Exception) {
-            discardOutput()
+            documentUri?.let { uri ->
+                runCatching { DocumentsContract.deleteDocument(contentResolver, uri) }
+            }
         }
     }
 
