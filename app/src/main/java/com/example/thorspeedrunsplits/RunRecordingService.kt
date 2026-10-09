@@ -124,6 +124,8 @@ class RunRecordingService : Service() {
             )
             recorder.start()
             recordingStartedAt = SystemClock.elapsedRealtime()
+            isRecording = true
+            broadcastRecordingState(active = true)
         } catch (_: Exception) {
             discardOutput()
             stopRecording(0L)
@@ -207,6 +209,8 @@ class RunRecordingService : Service() {
         finalizeOutputName(runLengthMillis)
         recordingStartedAt = 0L
         requestedRunLengthMillis = null
+        isRecording = false
+        broadcastRecordingState(active = false)
         isCleaningUp = false
         if (stopService) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -285,7 +289,22 @@ class RunRecordingService : Service() {
             .build()
     }
 
+    private fun broadcastRecordingState(active: Boolean) {
+        sendBroadcast(
+            Intent(ACTION_RECORDING_STATE).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_RECORDING_ACTIVE, active)
+            }
+        )
+    }
+
     companion object {
+        const val ACTION_RECORDING_STATE =
+            "com.example.thorspeedrunsplits.RECORDING_STATE"
+        const val EXTRA_RECORDING_ACTIVE = "recording_active"
+        @Volatile
+        var isRecording: Boolean = false
+
         private const val ACTION_START = "com.example.thorspeedrunsplits.START_RECORDING"
         private const val ACTION_STOP = "com.example.thorspeedrunsplits.STOP_RECORDING"
         private const val EXTRA_PROJECTION_DATA = "projection_data"

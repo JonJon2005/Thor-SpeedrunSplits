@@ -1,8 +1,10 @@
 package com.example.thorspeedrunsplits
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -33,6 +35,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -76,8 +79,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -774,6 +782,7 @@ private val DefaultPreset = SplitPreset(
 )
 
 private val GoldSplit = Color(0xFFFFD84D)
+private val RecordingRed = Color(0xFFFF3B30)
 private val LinkBlue = Color(0xFF5EA1FF)
 private const val ButtonFadeMillis = 280
 private const val ButtonVibrationMillis = 18L
@@ -967,7 +976,7 @@ private fun ThorSpeedrunSplitsApp() {
     var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
     var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
     var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
-    var recordingSessionActive by remember { mutableStateOf(false) }
+    var recordingSessionActive by remember { mutableStateOf(RunRecordingService.isRecording) }
     var editPresetScrollRequest by remember { mutableStateOf(0) }
     var presetPendingDelete by remember { mutableStateOf<SplitPreset?>(null) }
     val savedPresets = remember {
@@ -1018,6 +1027,33 @@ private fun ThorSpeedrunSplitsApp() {
         appContext.getSystemService(MediaProjectionManager::class.java)
     }
 
+    DisposableEffect(appContext) {
+        val recordingStateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == RunRecordingService.ACTION_RECORDING_STATE) {
+                    recordingSessionActive = intent.getBooleanExtra(
+                        RunRecordingService.EXTRA_RECORDING_ACTIVE,
+                        false
+                    )
+                }
+            }
+        }
+        val filter = IntentFilter(RunRecordingService.ACTION_RECORDING_STATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(
+                recordingStateReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appContext.registerReceiver(recordingStateReceiver, filter)
+        }
+        onDispose {
+            appContext.unregisterReceiver(recordingStateReceiver)
+        }
+    }
+
     fun beginRun(pressTime: Long, consent: ScreenCaptureConsent?) {
         if (isRunning) return
         val presetName = activePreset.presetName
@@ -1054,7 +1090,6 @@ private fun ThorSpeedrunSplitsApp() {
     fun stopRunRecording(runLengthMillis: Long) {
         if (!recordingSessionActive) return
         RunRecordingService.stop(appContext, runLengthMillis)
-        recordingSessionActive = false
     }
 
     val screenCaptureConsentLauncher = rememberLauncherForActivityResult(
@@ -2294,10 +2329,22 @@ private fun ThorSpeedrunSplitsApp() {
                     .align(Alignment.TopEnd)
                     .padding(top = 12.dp, end = 24.dp)
             ) {
-                SettingsButton(
-                    onClick = { isSettingsOpen = true },
-                    modifier = Modifier.size(48.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AnimatedVisibility(
+                        visible = recordingSessionActive,
+                        enter = fadeIn(animationSpec = tween(ButtonFadeMillis)),
+                        exit = fadeOut(animationSpec = tween(ButtonFadeMillis))
+                    ) {
+                        RecordingIndicator(modifier = Modifier.size(48.dp))
+                    }
+                    SettingsButton(
+                        onClick = { isSettingsOpen = true },
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
             }
         }
     }
@@ -2835,6 +2882,30 @@ private fun SettingsButton(
             contentDescription = "Settings",
             tint = PrimaryText,
             modifier = Modifier.size(28.dp)
+        )
+    }
+}
+
+@Composable
+private fun RecordingIndicator(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "recordingIndicator")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.28f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1_200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "recordingIndicatorAlpha"
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+    ) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .background(RecordingRed.copy(alpha = dotAlpha), CircleShape)
         )
     }
 }
