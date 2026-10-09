@@ -25,6 +25,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -257,6 +258,7 @@ private const val LoadedPresetPreferenceKey = "loaded_preset_name"
 private const val ThemePreferenceKey = "theme_mode"
 private const val UseSystemThemePreferenceKey = "use_system_theme"
 private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
+private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
 private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
@@ -270,6 +272,7 @@ private const val MinRecordingBitrateMbps = 2
 private const val MaxRecordingBitrateMbps = 16
 private const val DefaultRecordingFrameRate = 60
 private const val LowerRecordingFrameRate = 30
+private const val ResetHoldDurationMillis = 500
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
@@ -1001,6 +1004,7 @@ private fun ThorSpeedrunSplitsApp() {
     var selectedThemeMode by remember { mutableStateOf(AppThemeMode.Oled) }
     var useSystemTheme by remember { mutableStateOf(false) }
     var oledScreenShiftEnabled by remember { mutableStateOf(false) }
+    var requireHoldToReset by remember { mutableStateOf(true) }
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
@@ -1496,6 +1500,8 @@ private fun ThorSpeedrunSplitsApp() {
         useSystemTheme = appPreferenceDao.getValue(UseSystemThemePreferenceKey) == "true"
         oledScreenShiftEnabled =
             appPreferenceDao.getValue(OledScreenShiftPreferenceKey) == "true"
+        requireHoldToReset =
+            appPreferenceDao.getValue(RequireHoldToResetPreferenceKey) != "false"
         recordingFolderUri = appPreferenceDao.getValue(RecordingFolderPreferenceKey)
             ?.takeIf { it.isNotBlank() }
         recordOppositeScreenEnabled =
@@ -1711,6 +1717,7 @@ private fun ThorSpeedrunSplitsApp() {
                     showResetButton = isRunning,
                     showUndoButton = isRunning,
                     undoButtonEnabled = isRunning && activeSplitIndex > 0,
+                    requireHoldToReset = requireHoldToReset,
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
@@ -1964,6 +1971,7 @@ private fun ThorSpeedrunSplitsApp() {
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
                     oledScreenShiftEnabled = oledScreenShiftEnabled,
+                    requireHoldToReset = requireHoldToReset,
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -2002,6 +2010,17 @@ private fun ThorSpeedrunSplitsApp() {
                             appPreferenceDao.upsert(
                                 AppPreferenceEntity(
                                     key = OledScreenShiftPreferenceKey,
+                                    value = enabled.toString()
+                                )
+                            )
+                        }
+                    },
+                    onRequireHoldToResetChange = { enabled ->
+                        requireHoldToReset = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RequireHoldToResetPreferenceKey,
                                     value = enabled.toString()
                                 )
                             )
@@ -2880,6 +2899,7 @@ private fun BottomControls(
     showResetButton: Boolean,
     showUndoButton: Boolean,
     undoButtonEnabled: Boolean,
+    requireHoldToReset: Boolean,
     sumOfBestText: String?,
     attemptedRuns: Int,
     totalTimeText: String,
@@ -2931,10 +2951,11 @@ private fun BottomControls(
                             )
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        SplitButton(
+                        HoldToResetButton(
                             enabled = showResetButton,
                             text = "RESET",
-                            onSplit = onReset,
+                            requireHoldToReset = requireHoldToReset,
+                            onReset = onReset,
                             fontSize = 16.sp,
                             modifier = Modifier.size(
                                 width = resetButtonSize.width,
@@ -2943,10 +2964,11 @@ private fun BottomControls(
                         )
                     }
                 } else {
-                    SplitButton(
+                    HoldToResetButton(
                         enabled = showResetButton,
                         text = "RESET",
-                        onSplit = onReset,
+                        requireHoldToReset = requireHoldToReset,
+                        onReset = onReset,
                         fontSize = 20.sp,
                         modifier = Modifier.size(
                             width = resetButtonSize.width,
@@ -3116,12 +3138,14 @@ private fun SettingsPanel(
     effectiveThemeMode: AppThemeMode,
     useSystemTheme: Boolean,
     oledScreenShiftEnabled: Boolean,
+    requireHoldToReset: Boolean,
     selectedFontMode: AppFontMode,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
     onUseSystemThemeChange: (Boolean) -> Unit,
     onOledScreenShiftChange: (Boolean) -> Unit,
+    onRequireHoldToResetChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     recordingFolderUri: String?,
     availableRecordingResolutions: List<RecordingResolution>,
@@ -3256,6 +3280,12 @@ private fun SettingsPanel(
                 FontModeToggle(
                     selectedFontMode = selectedFontMode,
                     onSelectedFontModeChange = onSelectedFontModeChange
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                SettingsSectionTitle("Run Controls", Icons.Filled.Refresh)
+                RequireHoldToResetToggle(
+                    enabled = requireHoldToReset,
+                    onEnabledChange = onRequireHoldToResetChange
                 )
                 Spacer(modifier = Modifier.height(22.dp))
                 }
@@ -5006,6 +5036,41 @@ private fun OledScreenShiftToggle(
 }
 
 @Composable
+private fun RequireHoldToResetToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Require Hold to Reset",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1
+            )
+            Text(
+                text = "Hold RESET for half a second to reset a run",
+                color = SecondaryText,
+                fontSize = 11.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
+        )
+    }
+}
+
+@Composable
 private fun SettingsSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
@@ -5651,6 +5716,92 @@ private fun SplitButton(
             text = text,
             color = textColor,
             fontSize = fontSize
+        )
+    }
+}
+
+@Composable
+private fun HoldToResetButton(
+    enabled: Boolean,
+    text: String,
+    requireHoldToReset: Boolean,
+    onReset: () -> Unit,
+    fontSize: TextUnit = 22.sp,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val holdProgress = remember { Animatable(0f) }
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> RowBlack
+            isPressed -> ActiveRowBackground
+            else -> RowBlack
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "resetButtonBackground"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> DividerColor
+            isPressed -> PrimaryText
+            else -> PrimaryText
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "resetButtonBorder"
+    )
+
+    LaunchedEffect(isPressed, enabled, requireHoldToReset) {
+        if (enabled && requireHoldToReset && isPressed) {
+            holdProgress.snapTo(0f)
+            holdProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(ResetHoldDurationMillis)
+            )
+            if (isPressed) {
+                vibrate()
+                onReset()
+            }
+        } else {
+            holdProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(ButtonFadeMillis)
+            )
+        }
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(width = 2.dp, color = borderColor)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    if (!requireHoldToReset) {
+                        vibrate()
+                        onReset()
+                    }
+                }
+            )
+    ) {
+        if (requireHoldToReset) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .fillMaxWidth(holdProgress.value)
+                    .background(SuccessGreen.copy(alpha = 0.35f))
+            )
+        }
+        FadingButtonText(
+            text = text,
+            color = if (enabled) PrimaryText else SecondaryText,
+            fontSize = fontSize,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
         )
     }
 }

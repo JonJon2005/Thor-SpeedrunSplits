@@ -341,3 +341,4 @@ Change Log
 - 2026-10-09: Added a persisted recording frame-rate slider with 30 FPS and 60 FPS options; the selected value is sent to a surface-input MediaCodec encoder, which uses Android's maximum-input-FPS cap to drop excess display frames before encoding.
 - 2026-10-09: Fixed duplicate split-name crashes by using each split row's position as its LazyColumn key rather than the editable split name; duplicate names are now valid preset data.
 - 2026-10-09: Added a persisted, default-off `Save only completed run recordings` toggle; when enabled, resets and interrupted captures are discarded while completed runs continue to save normally.
+- 2026-10-09: Added a persisted, default-on `Require Hold to Reset` Customization toggle; RESET now fills left-to-right during a 0.5-second hold before resetting, while disabling the toggle restores tap-to-reset behavior.

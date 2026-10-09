@@ -19,7 +19,7 @@ You can add it to <b>Obtainium</b> here:
 ## Features
 
 - LiveSplit-style timer with color-coded split rows, one-decimal formatting, PB comparisons, live ahead/behind deltas, golds/best segments, automatic active-row scrolling, and manual scroll-back.
-- Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with haptics, pressed states, and subtle animations.
+- Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with haptics, pressed states, and subtle animations; RESET requires a visible half-second hold by default to avoid accidental resets, with an optional quick-tap setting.
 - Persistent PBs, Sum of Best, attempts, total run time, completed-run history, run details, PB dates, gold management, and largest segment gain/loss reporting.
 - Custom Room-backed presets with editable game/category, split names, colors, order, and row count; load, create, edit, delete, reset, and compatible PB-preserving updates.
 - Validated multi-preset `.thorbackup.json` export/import through Android's file picker, including definitions, PBs, golds, stats, and history with repeat-safe merging and conflict protection.
