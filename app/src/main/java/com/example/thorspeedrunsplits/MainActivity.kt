@@ -75,6 +75,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -125,6 +127,7 @@ import java.util.Locale
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -193,6 +196,15 @@ private data class ScreenCaptureConsent(
     val data: Intent
 )
 
+private data class RecordingResolution(
+    val name: String,
+    val width: Int,
+    val height: Int
+) {
+    val label: String
+        get() = "$name ($width × $height)"
+}
+
 private sealed interface UpdateCheckState {
     data object Idle : UpdateCheckState
     data object Checking : UpdateCheckState
@@ -246,6 +258,11 @@ private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
+private const val RecordingResolutionPreferenceKey = "recording_resolution"
+private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
+private const val DefaultRecordingBitrateMbps = 10
+private const val MinRecordingBitrateMbps = 2
+private const val MaxRecordingBitrateMbps = 16
 private const val OledScreenShiftIntervalMillis = 30_000L
 private const val LatestReleaseApiUrl =
     "https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest"
@@ -254,6 +271,13 @@ private const val GitHubRepositoryUrl =
 private const val CreatorWebsiteUrl = "https://jonathangallo.dev"
 private const val InternalDisplayId = 0
 private const val UntimedSplitSentinel = -1L
+
+private val CommonRecordingResolutions = listOf(
+    RecordingResolution(name = "240p", width = 426, height = 240),
+    RecordingResolution(name = "480p", width = 854, height = 480),
+    RecordingResolution(name = "720p", width = 1280, height = 720),
+    RecordingResolution(name = "1080p", width = 1920, height = 1080)
+)
 
 private fun screenNameForDisplayId(displayId: Int?): String {
     return when (displayId) {
@@ -959,6 +983,7 @@ private fun ThorSpeedrunSplitsApp() {
     val splitPresetDao = remember(database) { database.splitPresetDao() }
     val appPreferenceDao = remember(database) { database.appPreferenceDao() }
     val coroutineScope = rememberCoroutineScope()
+    val availableRecordingResolutions = remember { CommonRecordingResolutions }
     var isRunning by remember { mutableStateOf(false) }
     var isFinished by remember { mutableStateOf(false) }
     var activeSplitIndex by remember { mutableStateOf(0) }
@@ -974,6 +999,8 @@ private fun ThorSpeedrunSplitsApp() {
     var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
     var recordingFolderUri by remember { mutableStateOf<String?>(null) }
     var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
+    var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
+    var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
     var screenCaptureConsent by remember { mutableStateOf<ScreenCaptureConsent?>(null) }
     var pendingRunStartAfterConsent by remember { mutableStateOf(false) }
     var recordingSessionActive by remember { mutableStateOf(RunRecordingService.isRecording) }
@@ -1068,12 +1095,17 @@ private fun ThorSpeedrunSplitsApp() {
         startedAtMillis = pressTime
         nowMillis = pressTime
         if (recordOppositeScreenEnabled && consent != null) {
+            val selectedResolution = recordingResolution
+                ?: availableRecordingResolutions.last()
             RunRecordingService.start(
                 context = appContext,
                 projectionData = consent.data,
                 gameName = activePreset.gameTitle,
                 category = activePreset.category,
-                folderUri = recordingFolderUri
+                folderUri = recordingFolderUri,
+                resolutionWidth = selectedResolution.width,
+                resolutionHeight = selectedResolution.height,
+                bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000
             )
             recordingSessionActive = true
             screenCaptureConsent = null
@@ -1434,6 +1466,27 @@ private fun ThorSpeedrunSplitsApp() {
             ?.takeIf { it.isNotBlank() }
         recordOppositeScreenEnabled =
             appPreferenceDao.getValue(RecordOppositeScreenPreferenceKey) == "true"
+        val savedResolution = appPreferenceDao
+            .getValue(RecordingResolutionPreferenceKey)
+            ?.split('x')
+            ?.takeIf { it.size == 2 }
+            ?.let { parts ->
+                RecordingResolution(
+                    name = "",
+                    width = parts[0].toIntOrNull() ?: 0,
+                    height = parts[1].toIntOrNull() ?: 0
+                )
+            }
+        recordingResolution = availableRecordingResolutions.firstOrNull {
+            savedResolution?.let { saved ->
+                it.width == saved.width && it.height == saved.height
+            } == true
+        } ?: availableRecordingResolutions.last()
+        recordingBitrateMbps = appPreferenceDao
+            .getValue(RecordingBitratePreferenceKey)
+            ?.toIntOrNull()
+            ?.coerceIn(MinRecordingBitrateMbps, MaxRecordingBitrateMbps)
+            ?: DefaultRecordingBitrateMbps
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -1920,6 +1973,10 @@ private fun ThorSpeedrunSplitsApp() {
                         }
                     },
                     recordingFolderUri = recordingFolderUri,
+                    availableRecordingResolutions = availableRecordingResolutions,
+                    recordingResolution = recordingResolution
+                        ?: availableRecordingResolutions.last(),
+                    recordingBitrateMbps = recordingBitrateMbps,
                     recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                     onRecordOppositeScreenChange = { enabled ->
                         if (enabled) {
@@ -1938,6 +1995,32 @@ private fun ThorSpeedrunSplitsApp() {
                                     )
                                 )
                             }
+                        }
+                    },
+                    onRecordingResolutionChange = { resolution ->
+                        recordingResolution = resolution
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingResolutionPreferenceKey,
+                                    value = "${resolution.width}x${resolution.height}"
+                                )
+                            )
+                        }
+                    },
+                    onRecordingBitrateChange = { mbps ->
+                        val normalizedMbps = mbps.coerceIn(
+                            MinRecordingBitrateMbps,
+                            MaxRecordingBitrateMbps
+                        )
+                        recordingBitrateMbps = normalizedMbps
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = RecordingBitratePreferenceKey,
+                                    value = normalizedMbps.toString()
+                                )
+                            )
                         }
                     },
                     onChooseRecordingFolder = {
@@ -2932,8 +3015,13 @@ private fun SettingsPanel(
     onOledScreenShiftChange: (Boolean) -> Unit,
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     recordingFolderUri: String?,
+    availableRecordingResolutions: List<RecordingResolution>,
+    recordingResolution: RecordingResolution,
+    recordingBitrateMbps: Int,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onRecordingResolutionChange: (RecordingResolution) -> Unit,
+    onRecordingBitrateChange: (Int) -> Unit,
     onChooseRecordingFolder: () -> Unit,
     onUseDefaultRecordingFolder: () -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
@@ -3083,8 +3171,13 @@ private fun SettingsPanel(
                 item {
                     RecordingSettingsPanel(
                         recordingFolderUri = recordingFolderUri,
+                        availableRecordingResolutions = availableRecordingResolutions,
+                        recordingResolution = recordingResolution,
+                        recordingBitrateMbps = recordingBitrateMbps,
                         recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                         onRecordOppositeScreenChange = onRecordOppositeScreenChange,
+                        onRecordingResolutionChange = onRecordingResolutionChange,
+                        onRecordingBitrateChange = onRecordingBitrateChange,
                         onChooseFolder = onChooseRecordingFolder,
                         onUseDefaultFolder = onUseDefaultRecordingFolder
                     )
@@ -4231,6 +4324,15 @@ private fun RunsViewTabs(
 }
 
 @Composable
+private fun recordingSliderColors() = SliderDefaults.colors(
+    thumbColor = SuccessGreen,
+    activeTrackColor = SuccessGreen,
+    activeTickColor = SuccessGreen,
+    inactiveTrackColor = DividerColor,
+    inactiveTickColor = DividerColor
+)
+
+@Composable
 private fun SettingsTwoWayTabs(
     firstText: String,
     secondText: String,
@@ -4265,8 +4367,13 @@ private fun SettingsTwoWayTabs(
 @Composable
 private fun RecordingSettingsPanel(
     recordingFolderUri: String?,
+    availableRecordingResolutions: List<RecordingResolution>,
+    recordingResolution: RecordingResolution,
+    recordingBitrateMbps: Int,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
+    onRecordingResolutionChange: (RecordingResolution) -> Unit,
+    onRecordingBitrateChange: (Int) -> Unit,
     onChooseFolder: () -> Unit,
     onUseDefaultFolder: () -> Unit
 ) {
@@ -4323,6 +4430,85 @@ private fun RecordingSettingsPanel(
             lineHeight = 15.sp
         )
     }
+    Spacer(modifier = Modifier.height(18.dp))
+
+    SettingsSectionTitle("Video Quality", Icons.Filled.Settings)
+    Text(
+        text = "Resolution: ${recordingResolution.label}",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = availableRecordingResolutions
+            .indexOf(recordingResolution)
+            .coerceAtLeast(0)
+            .toFloat(),
+        onValueChange = { value ->
+            availableRecordingResolutions
+                .getOrNull(value.roundToInt())
+                ?.let(onRecordingResolutionChange)
+        },
+        valueRange = 0f..(availableRecordingResolutions.lastIndex).toFloat(),
+        steps = (availableRecordingResolutions.size - 2).coerceAtLeast(0),
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = availableRecordingResolutions.first().label,
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = availableRecordingResolutions.last().label,
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "Bitrate: ${recordingBitrateMbps} Mbps",
+        color = PrimaryText,
+        fontSize = 15.sp,
+        lineHeight = 15.sp
+    )
+    Slider(
+        value = recordingBitrateMbps.toFloat(),
+        onValueChange = { onRecordingBitrateChange(it.roundToInt()) },
+        valueRange = MinRecordingBitrateMbps.toFloat()..MaxRecordingBitrateMbps.toFloat(),
+        steps = 13,
+        colors = recordingSliderColors(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${MinRecordingBitrateMbps} Mbps",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "${MaxRecordingBitrateMbps} Mbps",
+            color = SecondaryText,
+            fontSize = 11.sp
+        )
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "These controls apply to the next recording and are independent of each other.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "Lower resolution or bitrate saves storage space but reduces video quality.",
+        color = SecondaryText,
+        fontSize = 12.sp,
+        lineHeight = 15.sp
+    )
     Spacer(modifier = Modifier.height(18.dp))
 
     SettingsSectionTitle("Recording Location", Icons.Filled.PlayArrow)

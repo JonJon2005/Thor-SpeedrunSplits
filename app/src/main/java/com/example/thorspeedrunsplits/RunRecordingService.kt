@@ -29,6 +29,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class RunRecordingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -101,10 +102,26 @@ class RunRecordingService : Service() {
 
         try {
             val metrics = defaultDisplayMetrics()
-            val width = metrics.widthPixels.coerceAtLeast(2).let { it - (it % 2) }
-            val height = metrics.heightPixels.coerceAtLeast(2).let { it - (it % 2) }
+            val resolutionWidth = intent.getIntExtra(
+                EXTRA_RESOLUTION_WIDTH,
+                metrics.widthPixels
+            )
+            val resolutionHeight = intent.getIntExtra(
+                EXTRA_RESOLUTION_HEIGHT,
+                metrics.heightPixels
+            )
+            val bitrateBitsPerSecond = intent.getIntExtra(
+                EXTRA_BITRATE_BITS_PER_SECOND,
+                DEFAULT_BITRATE_BITS_PER_SECOND
+            ).coerceIn(MIN_BITRATE_BITS_PER_SECOND, MAX_BITRATE_BITS_PER_SECOND)
+            val (width, height) = fitResolutionToDisplay(
+                requestedWidth = resolutionWidth,
+                requestedHeight = resolutionHeight,
+                nativeWidth = metrics.widthPixels,
+                nativeHeight = metrics.heightPixels
+            )
             prepareOutput(intent.getStringExtra(EXTRA_FOLDER_URI))
-            val recorder = createRecorder(width, height)
+            val recorder = createRecorder(width, height, bitrateBitsPerSecond)
             mediaRecorder = recorder
 
             val manager = getSystemService(MediaProjectionManager::class.java)
@@ -142,7 +159,11 @@ class RunRecordingService : Service() {
         mainHandler.postDelayed(delayedStop, RECORDING_TAIL_MILLIS)
     }
 
-    private fun createRecorder(width: Int, height: Int): MediaRecorder {
+    private fun createRecorder(
+        width: Int,
+        height: Int,
+        bitrateBitsPerSecond: Int
+    ): MediaRecorder {
         val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(this)
         } else {
@@ -156,7 +177,7 @@ class RunRecordingService : Service() {
         recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
         recorder.setVideoSize(width, height)
         recorder.setVideoFrameRate(60)
-        recorder.setVideoEncodingBitRate(10_000_000)
+        recorder.setVideoEncodingBitRate(bitrateBitsPerSecond)
         recorder.prepare()
         return recorder
     }
@@ -253,6 +274,30 @@ class RunRecordingService : Service() {
         else SystemClock.elapsedRealtime() - recordingStartedAt
     }
 
+    private fun fitResolutionToDisplay(
+        requestedWidth: Int,
+        requestedHeight: Int,
+        nativeWidth: Int,
+        nativeHeight: Int
+    ): Pair<Int, Int> {
+        val safeRequestedWidth = requestedWidth.coerceAtLeast(2)
+        val safeRequestedHeight = requestedHeight.coerceAtLeast(2)
+        val safeNativeWidth = nativeWidth.coerceAtLeast(2)
+        val safeNativeHeight = nativeHeight.coerceAtLeast(2)
+        val scale = minOf(
+            1f,
+            safeNativeWidth.toFloat() / safeRequestedWidth,
+            safeNativeHeight.toFloat() / safeRequestedHeight
+        )
+        val width = (safeRequestedWidth * scale).roundToInt()
+            .coerceAtLeast(2)
+            .let { it - (it % 2) }
+        val height = (safeRequestedHeight * scale).roundToInt()
+            .coerceAtLeast(2)
+            .let { it - (it % 2) }
+        return width to height
+    }
+
     @Suppress("DEPRECATION")
     private fun defaultDisplayMetrics(): DisplayMetrics {
         val display = getSystemService(DisplayManager::class.java)
@@ -311,17 +356,26 @@ class RunRecordingService : Service() {
         private const val EXTRA_GAME_NAME = "game_name"
         private const val EXTRA_CATEGORY = "category"
         private const val EXTRA_FOLDER_URI = "folder_uri"
+        private const val EXTRA_RESOLUTION_WIDTH = "resolution_width"
+        private const val EXTRA_RESOLUTION_HEIGHT = "resolution_height"
+        private const val EXTRA_BITRATE_BITS_PER_SECOND = "bitrate_bits_per_second"
         private const val EXTRA_RUN_LENGTH_MILLIS = "run_length_millis"
         private const val NOTIFICATION_CHANNEL_ID = "run_recording"
         private const val NOTIFICATION_ID = 6006
         private const val RECORDING_TAIL_MILLIS = 3_000L
+        private const val DEFAULT_BITRATE_BITS_PER_SECOND = 10_000_000
+        private const val MIN_BITRATE_BITS_PER_SECOND = 2_000_000
+        private const val MAX_BITRATE_BITS_PER_SECOND = 16_000_000
 
         fun start(
             context: Context,
             projectionData: Intent,
             gameName: String,
             category: String,
-            folderUri: String?
+            folderUri: String?,
+            resolutionWidth: Int,
+            resolutionHeight: Int,
+            bitrateBitsPerSecond: Int
         ) {
             val intent = Intent(context, RunRecordingService::class.java).apply {
                 action = ACTION_START
@@ -329,6 +383,9 @@ class RunRecordingService : Service() {
                 putExtra(EXTRA_GAME_NAME, gameName)
                 putExtra(EXTRA_CATEGORY, category)
                 putExtra(EXTRA_FOLDER_URI, folderUri)
+                putExtra(EXTRA_RESOLUTION_WIDTH, resolutionWidth)
+                putExtra(EXTRA_RESOLUTION_HEIGHT, resolutionHeight)
+                putExtra(EXTRA_BITRATE_BITS_PER_SECOND, bitrateBitsPerSecond)
             }
             ContextCompat.startForegroundService(context, intent)
         }
