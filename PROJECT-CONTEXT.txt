@@ -174,7 +174,7 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.5"` and `versionCode = 7`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.6"` and `versionCode = 8`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
@@ -335,4 +335,5 @@ Change Log
 - 2026-10-09: Updated the independent persisted recording sliders to use common 240p, 480p, 720p, and 1080p resolutions plus video bitrate (2–16 Mbps); both values are applied directly to the MediaProjection/MediaRecorder pipeline for the next run.
 - 2026-10-09: Recording quality guidance now covers resolution and bitrate; recordings remain fixed at the default 60 FPS until a frame-rate setting is intentionally added later.
 - 2026-10-09: Added an optional recording-audio toggle that requests Android playback-capture permission (not microphone input), captures matching internal-display media/game playback with AudioRecord, and muxes AAC audio into the recorded MP4 when the run ends.
+- 2026-10-09: Replaced the prior README screenshots with 11 labeled captures from the current build and refreshed the README feature summary to match the complete app feature set; the store icon was retained.
 - [APK] v0.6 released

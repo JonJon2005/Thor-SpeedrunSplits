@@ -18,44 +18,38 @@ You can add it to <b>Obtainium</b> here:
 
 ## Features
 
-- LiveSplit-style timer with color-coded rows, PB times, live ahead/behind deltas, automatic scrolling, and compact time formatting.
-- Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with vibration and subtle animations.
-- Persistent personal bests, gold/best segments, Sum of Best, attempt count, and total run time for every preset.
-- Completed-run history with saved game/category and split snapshots, comparison deltas, golds, and largest gain/loss details.
-- Records tools to view PB completion time, inspect PB/gold splits, and clear individual golds, all golds, or the PB.
-- Custom presets with editable names, game, category, split names, colors, order, and row count; presets can be loaded, edited, deleted, or reset to the built-in example.
-- Compatible preset edits preserve mapped PB and best-segment data, while destructive deletes require confirmation.
-- Room persistence for presets, records, history, statistics, preferences, and the last loaded preset.
-- Multi-preset JSON backup and restore through Android's file picker, including records, stats, and history; imports are validated, repeat-safe, and merge without overwriting conflicting presets.
+- LiveSplit-style timer with color-coded split rows, one-decimal formatting, PB comparisons, live ahead/behind deltas, golds/best segments, automatic active-row scrolling, and manual scroll-back.
+- Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with haptics, pressed states, and subtle animations.
+- Persistent PBs, Sum of Best, attempts, total run time, completed-run history, run details, PB dates, gold management, and largest segment gain/loss reporting.
+- Custom Room-backed presets with editable game/category, split names, colors, order, and row count; load, create, edit, delete, reset, and compatible PB-preserving updates.
+- Validated multi-preset `.thorbackup.json` export/import through Android's file picker, including definitions, PBs, golds, stats, and history with repeat-safe merging and conflict protection.
+- Collapsible icon-based settings drawer with sticky section headers for Customization, Presets, Runs & Records, Recording, Backup & Data, and About.
 - Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
-- Automatic GitHub release checks with an in-app `Update Now` link when a newer version is available.
-- Collapsible settings drawer for customization, presets, runs and records, backup and data, and app information, with a sticky section header.
-- Automatic run recording of Android's internal/default display when enabled: capture starts with the timer, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder with the preset game, category, run length, and date in its filename. On dual-screen devices, true opposite-screen capture requires the timer app to run on the external display.
-- Optional internal-display playback audio capture can be included in recordings; it captures device playback rather than microphone input and combines the audio with the MP4 after capture.
-- Independent recording controls for common 240p, 480p, 720p, and 1080p resolutions and video bitrate (2–16 Mbps), applied directly during capture to control quality and file size; recordings use 60 FPS.
-- A slow-flashing red recording indicator appears beside Settings while capture is active, including during the post-run tail.
-- Immersive fullscreen layout designed for the AYN Thor's 1080x1240 bottom AMOLED display, with large touch targets and long-title handling.
+- Automatic GitHub release checks with an in-app `Update Now` link, About links, version display, and internal/external display status for dual-screen devices.
+- Run recording of Android's internal/default display: starts with a run, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder using the preset game, category, run length, and date.
+- Optional opposite-screen recording target and internal playback-audio capture (device playback, not microphone input), plus a flashing red recording indicator while capture is active.
+- Independent recording controls for 240p, 480p, 720p, or 1080p resolution and 2–16 Mbps bitrate; settings apply at capture time and recordings remain 60 FPS.
+- Immersive fullscreen layout optimized for the AYN Thor's 1080x1240 AMOLED display, with large targets, long-title handling, and dual-screen-aware display labeling.
 
 ## Screenshots
 
-Settings and Records:
+Home and settings drawer:
 <p>
-  <img src="docs/images/example-1.png" alt="Thor Speedrun Splits timer screen" width="420">
-  <img src="docs/images/example-2.png" alt="Thor Speedrun Splits settings page" width="420">
-  <img src="docs/images/example-6.png" alt="Thor Speedrun Splits viewing records" width="420">
+  <img src="docs/images/home-timer.png" alt="Home timer with split controls" width="360">
+  <img src="docs/images/settings-drawer-dark.png" alt="Dark settings drawer" width="360">
+  <img src="docs/images/settings-drawer-light.png" alt="Light settings drawer" width="360">
+  <img src="docs/images/settings-drawer-oled.png" alt="OLED settings drawer" width="360">
 </p>
 
-Managing Presets:
+Settings sections:
 <p>
-  <img src="docs/images/example-3.png" alt="Thor Speedrun Splits presets" width="420">
-  <img src="docs/images/example-4.png" alt="Thor Speedrun Splits creating a preset" width="420">
-  <img src="docs/images/example-5.png" alt="Thor Speedrun Splits editing a preset" width="420">
-</p>
-
-Themes:
-<p>
-  <img src="docs/images/example-7.png" alt="Thor Speedrun Splits OLED mode" width="420">
-  <img src="docs/images/example-8.png" alt="Thor Speedrun Splits Light mode" width="420">
+  <img src="docs/images/customization.png" alt="Customization settings" width="360">
+  <img src="docs/images/presets.png" alt="Saved presets" width="360">
+  <img src="docs/images/runs-records.png" alt="Runs and records" width="360">
+  <img src="docs/images/backup-data.png" alt="Backup and data" width="360">
+  <img src="docs/images/recording-capture.png" alt="Recording capture settings" width="360">
+  <img src="docs/images/recording-quality-location.png" alt="Recording quality and location settings" width="360">
+  <img src="docs/images/about.png" alt="About and display status" width="360">
 </p>
 
 ## Requirements to build app yourself (this project is open-source)
