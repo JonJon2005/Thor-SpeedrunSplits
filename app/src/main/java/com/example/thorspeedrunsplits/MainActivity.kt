@@ -90,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -232,7 +233,16 @@ private const val LatestReleaseApiUrl =
 private const val GitHubRepositoryUrl =
     "https://github.com/JonJon2005/Thor-SpeedrunSplits"
 private const val CreatorWebsiteUrl = "https://jonathangallo.dev"
+private const val InternalDisplayId = 0
 private const val UntimedSplitSentinel = -1L
+
+private fun screenNameForDisplayId(displayId: Int?): String {
+    return when (displayId) {
+        null -> "Unknown screen"
+        InternalDisplayId -> "Internal screen"
+        else -> "External screen"
+    }
+}
 
 private val OledScreenShiftPattern = listOf(
     0f to 0f,
@@ -3823,6 +3833,8 @@ private fun SettingsSidebar(
     onSelectedSectionChange: (SettingsSection) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentScreenName = screenNameForDisplayId(LocalView.current.display?.displayId)
+
     Column(
         modifier = modifier
             .background(RowBlack)
@@ -3852,11 +3864,12 @@ private fun SettingsSidebar(
         }
         Spacer(modifier = Modifier.weight(1f))
         Text(
-            text = "v${BuildConfig.VERSION_NAME}",
+            text = "v${BuildConfig.VERSION_NAME}  |  App is open on: $currentScreenName",
             color = SecondaryText,
             fontSize = 12.sp,
             lineHeight = 12.sp,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
@@ -3984,6 +3997,8 @@ private fun AboutSettingsPanel(
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit
 ) {
+    val currentScreenName = screenNameForDisplayId(LocalView.current.display?.displayId)
+
     SettingsSectionTitle("Thor Speedrun Splits", Icons.Filled.Info)
     Text(
         text = "Version ${BuildConfig.VERSION_NAME}",
@@ -3996,6 +4011,14 @@ private fun AboutSettingsPanel(
     UpdateCheckRow(
         updateCheckState = updateCheckState,
         onOpenRelease = onOpenRelease
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "App is open on: $currentScreenName",
+        color = PrimaryText,
+        fontSize = 14.sp,
+        lineHeight = 14.sp,
+        maxLines = 1
     )
     Spacer(modifier = Modifier.height(18.dp))
     Text(

@@ -326,3 +326,5 @@ Change Log
 - 2026-10-09: Added native Android Material icons to every Settings drawer destination, section headings, and key actions including preset creation/saving, reset, backup/import, record clearing, run details, and back navigation.
 - 2026-10-09: Compacted the sticky Settings section header from 104dp to 76dp with smaller typography and 46dp menu/close controls to reclaim vertical content space without sacrificing touch accessibility.
 - 2026-10-09: Changed the home-screen Settings control from a 104x48dp rectangle to a compact 48dp square and reduced the title's reserved right-side space accordingly.
+- 2026-10-09: Added an About status line that identifies whether the app is running on Android's internal/default display or an external/secondary display, establishing the display-selection basis for a future opposite-screen recording feature on the AYN Thor.
+- 2026-10-09: Also displayed the current internal/external screen status beside the app version at the bottom of the Settings navigation drawer.
