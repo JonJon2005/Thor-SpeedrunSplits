@@ -320,3 +320,5 @@ Change Log
 - 2026-10-09: Bumped app metadata to v0.6/versionCode 8 and refreshed the README with the complete current feature set while preserving all screenshots.
 - 2026-10-09: Added a persisted OLED Screen Shift toggle under Theme; when enabled, the full interface follows a subtle nine-position two-pixel pattern every 30 seconds to reduce static OLED wear on Thor and Retroid Duo displays.
 - 2026-10-09: Moved the Settings title/update header into the scrollable content so it scrolls away and frees the full display height; the close button remains fixed at the top-right.
+- 2026-10-09: Redesigned Settings around a persistent left sidebar with Customization, Presets, Runs & Records, Backup & Data, and About sections; retained local Create/Edit and Records/History subviews, kept the close button fixed, and replaced boolean text buttons with visual toggle switches.
+- 2026-10-09: Replaced the persistent Settings sidebar with a collapsible left drawer based on the provided reference: a sticky top header holds the hamburger, active section title, and close control; selecting a drawer section closes it so narrower Thor displays regain the full content width.

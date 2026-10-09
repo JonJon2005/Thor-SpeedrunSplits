@@ -29,6 +29,7 @@ You can add it to <b>Obtainium</b> here:
 - Multi-preset JSON backup and restore through Android's file picker, including records, stats, and history; imports are validated, repeat-safe, and merge without overwriting conflicting presets.
 - Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
 - Automatic GitHub release checks with an in-app `Update Now` link when a newer version is available.
+- Collapsible settings drawer for customization, presets, runs and records, backup and data, and app information, with a sticky section header.
 - Immersive fullscreen layout designed for the AYN Thor's 1080x1240 bottom AMOLED display, with large touch targets and long-title handling.
 
 ## Screenshots

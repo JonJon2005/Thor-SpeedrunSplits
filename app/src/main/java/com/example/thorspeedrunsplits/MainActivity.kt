@@ -22,6 +22,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,9 +51,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
@@ -902,7 +907,7 @@ private fun ThorSpeedrunSplitsApp() {
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
-    var presetSettingsTab by remember { mutableStateOf(PresetSettingsTab.Create) }
+    var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
     var editPresetScrollRequest by remember { mutableStateOf(0) }
     var presetPendingDelete by remember { mutableStateOf<SplitPreset?>(null) }
     val savedPresets = remember {
@@ -1750,9 +1755,9 @@ private fun ThorSpeedrunSplitsApp() {
                             )
                         )
                     },
-                    selectedTab = presetSettingsTab,
+                    selectedSection = settingsSection,
                     editPresetScrollRequest = editPresetScrollRequest,
-                    onSelectedTabChange = { presetSettingsTab = it },
+                    onSelectedSectionChange = { settingsSection = it },
                     draftPresetName = draftPresetName,
                     onDraftPresetNameChange = { draftPresetName = it },
                     draftGameTitle = draftGameTitle,
@@ -1844,7 +1849,7 @@ private fun ThorSpeedrunSplitsApp() {
                     onStartEditPreset = { preset ->
                         if (preset.presetName != DefaultPreset.presetName) {
                             startEditingPreset(preset)
-                            presetSettingsTab = PresetSettingsTab.Edit
+                            settingsSection = SettingsSection.Presets
                             editPresetScrollRequest += 1
                         }
                     },
@@ -2099,12 +2104,22 @@ private data class ButtonSize(
     val height: Dp
 )
 
-private enum class PresetSettingsTab {
+private enum class SettingsSection(val label: String) {
+    Customization("Customization"),
+    Presets("Presets"),
+    Runs("Runs & Records"),
+    Data("Backup & Data"),
+    About("About")
+}
+
+private enum class PresetSettingsView {
     Create,
-    Edit,
+    Edit
+}
+
+private enum class RunsSettingsView {
     Records,
-    History,
-    Backup
+    History
 }
 
 @Composable
@@ -2631,9 +2646,9 @@ private fun SettingsPanel(
     onSelectedFontModeChange: (AppFontMode) -> Unit,
     onRequestBackup: (Set<String>) -> Unit,
     onRequestBackupImport: () -> Unit,
-    selectedTab: PresetSettingsTab,
+    selectedSection: SettingsSection,
     editPresetScrollRequest: Int,
-    onSelectedTabChange: (PresetSettingsTab) -> Unit,
+    onSelectedSectionChange: (SettingsSection) -> Unit,
     draftPresetName: String,
     onDraftPresetNameChange: (String) -> Unit,
     draftGameTitle: String,
@@ -2674,19 +2689,26 @@ private fun SettingsPanel(
     var selectedHistoricalRunId by remember(activePreset.presetName) {
         mutableStateOf<Long?>(null)
     }
+    var selectedPresetView by remember { mutableStateOf(PresetSettingsView.Create) }
+    var selectedRunsView by remember { mutableStateOf(RunsSettingsView.Records) }
+    var isNavigationOpen by remember { mutableStateOf(false) }
     val availableBackupPresetNames = savedPresets.map { it.presetName }
     var selectedBackupPresetNames by remember {
         mutableStateOf(setOf(activePreset.presetName))
     }
 
-    LaunchedEffect(editPresetScrollRequest, selectedTab) {
-        if (editPresetScrollRequest > 0 && selectedTab == PresetSettingsTab.Edit) {
-            settingsListState.animateScrollToItem(2)
+    LaunchedEffect(editPresetScrollRequest, selectedSection) {
+        if (editPresetScrollRequest > 0 && selectedSection == SettingsSection.Presets) {
+            selectedPresetView = PresetSettingsView.Edit
+            settingsListState.scrollToItem(0)
         }
     }
 
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != PresetSettingsTab.History) {
+    LaunchedEffect(selectedSection, selectedRunsView) {
+        settingsListState.scrollToItem(0)
+        if (selectedSection != SettingsSection.Runs ||
+            selectedRunsView != RunsSettingsView.History
+        ) {
             selectedHistoricalRunId = null
         }
     }
@@ -2701,42 +2723,22 @@ private fun SettingsPanel(
         modifier = modifier
             .background(OledBlack)
     ) {
-        LazyColumn(
-            state = settingsListState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 14.dp)
-        ) {
-            item {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+        Column(modifier = Modifier.fillMaxSize()) {
+            SettingsStickyHeader(
+                selectedSection = selectedSection,
+                onOpenNavigation = { isNavigationOpen = true },
+                onClose = onClose
+            )
+                LazyColumn(
+                    state = settingsListState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(104.dp)
-                        .background(RowBlack)
-                        .border(width = 0.5.dp, color = DividerColor)
-                        .padding(start = 24.dp, end = 72.dp)
+                        .weight(1f)
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Settings",
-                            color = PrimaryText,
-                            fontSize = 24.sp,
-                            lineHeight = 24.sp,
-                            maxLines = 1
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        UpdateCheckRow(
-                            updateCheckState = updateCheckState,
-                            onOpenRelease = onOpenRelease
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(14.dp))
-            }
-
-            item {
-                SettingsSectionTitle("Theme")
+            if (selectedSection == SettingsSection.Customization) {
+                item {
+                SettingsSectionTitle("Appearance")
                 ThemeModeToggle(
                     selectedThemeMode = selectedThemeMode,
                     effectiveThemeMode = effectiveThemeMode,
@@ -2754,8 +2756,11 @@ private fun SettingsPanel(
                     selectedFontMode = selectedFontMode,
                     onSelectedFontModeChange = onSelectedFontModeChange
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                SettingsSectionTitle("Presets")
+                Spacer(modifier = Modifier.height(22.dp))
+                }
+            } else if (selectedSection == SettingsSection.Presets) {
+                item {
+                SettingsSectionTitle("Saved Presets")
                 savedPresets.forEach { preset ->
                     PresetLoadRow(
                         preset = preset,
@@ -2768,14 +2773,33 @@ private fun SettingsPanel(
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
-                SettingsModeTabs(
-                    selectedTab = selectedTab,
-                    onSelectedTabChange = onSelectedTabChange
+                PresetViewTabs(
+                    selectedView = selectedPresetView,
+                    onSelectedViewChange = { selectedPresetView = it }
                 )
                 Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else if (selectedSection == SettingsSection.Runs) {
+                item {
+                    RunsViewTabs(
+                        selectedView = selectedRunsView,
+                        onSelectedViewChange = { selectedRunsView = it }
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else if (selectedSection == SettingsSection.About) {
+                item {
+                    AboutSettingsPanel(
+                        updateCheckState = updateCheckState,
+                        onOpenRelease = onOpenRelease
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                }
             }
 
-            if (selectedTab == PresetSettingsTab.Create) {
+            if (selectedSection == SettingsSection.Presets &&
+                selectedPresetView == PresetSettingsView.Create
+            ) {
                 item {
                     SettingsSectionTitle("Create New")
                     LabeledTextInput(
@@ -2837,7 +2861,9 @@ private fun SettingsPanel(
                     }
                     Spacer(modifier = Modifier.height(22.dp))
                 }
-            } else if (selectedTab == PresetSettingsTab.Edit) {
+            } else if (selectedSection == SettingsSection.Presets &&
+                selectedPresetView == PresetSettingsView.Edit
+            ) {
                 item {
                     SettingsSectionTitle("Edit Selected")
                     if (editTargetPresetName == null) {
@@ -2909,7 +2935,9 @@ private fun SettingsPanel(
                         Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
-            } else if (selectedTab == PresetSettingsTab.Records) {
+            } else if (selectedSection == SettingsSection.Runs &&
+                selectedRunsView == RunsSettingsView.Records
+            ) {
                 item {
                     RecordsPanel(
                         preset = activePreset,
@@ -2921,7 +2949,9 @@ private fun SettingsPanel(
                     )
                     Spacer(modifier = Modifier.height(22.dp))
                 }
-            } else if (selectedTab == PresetSettingsTab.History) {
+            } else if (selectedSection == SettingsSection.Runs &&
+                selectedRunsView == RunsSettingsView.History
+            ) {
                 val selectedHistoricalRun = activeRunHistory.firstOrNull {
                     it.id == selectedHistoricalRunId
                 }
@@ -2972,7 +3002,7 @@ private fun SettingsPanel(
                     }
                     item { Spacer(modifier = Modifier.height(22.dp)) }
                 }
-            } else {
+            } else if (selectedSection == SettingsSection.Data) {
                 item {
                     BackupHeader(
                         selectedPresetCount = selectedBackupPresetNames.size,
@@ -3046,15 +3076,50 @@ private fun SettingsPanel(
                     Spacer(modifier = Modifier.height(22.dp))
                 }
             }
+            }
         }
 
-        CloseButton(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 26.dp, end = 14.dp)
-                .size(52.dp)
-        )
+        AnimatedVisibility(
+            visible = isNavigationOpen,
+            enter = fadeIn(animationSpec = tween(ButtonFadeMillis)),
+            exit = fadeOut(animationSpec = tween(ButtonFadeMillis)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x99000000))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { isNavigationOpen = false }
+                        )
+                )
+                AnimatedVisibility(
+                    visible = isNavigationOpen,
+                    enter = slideInHorizontally(
+                        animationSpec = tween(ButtonFadeMillis),
+                        initialOffsetX = { -it }
+                    ),
+                    exit = slideOutHorizontally(
+                        animationSpec = tween(ButtonFadeMillis),
+                        targetOffsetX = { -it }
+                    )
+                ) {
+                    SettingsSidebar(
+                        selectedSection = selectedSection,
+                        onSelectedSectionChange = { section ->
+                            onSelectedSectionChange(section)
+                            isNavigationOpen = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth(0.64f)
+                            .fillMaxHeight()
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -3657,10 +3722,193 @@ private fun BackupPresetSelectionRow(
     Spacer(modifier = Modifier.height(6.dp))
 }
 
+private fun settingsSectionDescription(section: SettingsSection): String {
+    return when (section) {
+        SettingsSection.Customization -> "Appearance and display behavior"
+        SettingsSection.Presets -> "Create, load, and edit split layouts"
+        SettingsSection.Runs -> "Personal bests, golds, and completed attempts"
+        SettingsSection.Data -> "Back up or restore timer data"
+        SettingsSection.About -> "Version and update information"
+    }
+}
+
 @Composable
-private fun SettingsModeTabs(
-    selectedTab: PresetSettingsTab,
-    onSelectedTabChange: (PresetSettingsTab) -> Unit
+private fun SettingsStickyHeader(
+    selectedSection: SettingsSection,
+    onOpenNavigation: () -> Unit,
+    onClose: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(104.dp)
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 14.dp)
+    ) {
+        PanelIconButton(
+            imageVector = Icons.Filled.Menu,
+            contentDescription = "Open settings sections",
+            onClick = onOpenNavigation,
+            modifier = Modifier.size(52.dp)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = selectedSection.label,
+                color = PrimaryText,
+                fontSize = 23.sp,
+                lineHeight = 23.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(7.dp))
+            Text(
+                text = settingsSectionDescription(selectedSection),
+                color = SecondaryText,
+                fontSize = 13.sp,
+                lineHeight = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        CloseButton(
+            onClick = onClose,
+            modifier = Modifier.size(52.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsSidebar(
+    selectedSection: SettingsSection,
+    onSelectedSectionChange: (SettingsSection) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(RowBlack)
+            .border(width = 0.5.dp, color = DividerColor)
+            .padding(horizontal = 12.dp, vertical = 18.dp)
+    ) {
+        Text(
+            text = "Settings",
+            color = PrimaryText,
+            fontSize = 22.sp,
+            lineHeight = 22.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SettingsSection.entries.forEach { section ->
+            SettingsSidebarButton(
+                text = section.label,
+                selected = selectedSection == section,
+                onClick = { onSelectedSectionChange(section) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "v${BuildConfig.VERSION_NAME}",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            lineHeight = 12.sp,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsSidebarButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val vibrate = rememberButtonVibration()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            selected -> ActiveRowBackground
+            isPressed -> ActiveRowBackground.copy(alpha = 0.65f)
+            else -> RowBlack
+        },
+        animationSpec = tween(ButtonFadeMillis),
+        label = "settingsSidebarBackground"
+    )
+
+    Box(
+        contentAlignment = Alignment.CenterStart,
+        modifier = modifier
+            .background(backgroundColor)
+            .border(
+                width = if (selected) 1.dp else 0.5.dp,
+                color = if (selected) PrimaryText else DividerColor
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    vibrate()
+                    onClick()
+                }
+            )
+            .padding(horizontal = 12.dp)
+    ) {
+        Text(
+            text = text,
+            color = if (selected) PrimaryText else SecondaryText,
+            fontSize = 14.sp,
+            lineHeight = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun PresetViewTabs(
+    selectedView: PresetSettingsView,
+    onSelectedViewChange: (PresetSettingsView) -> Unit
+) {
+    SettingsTwoWayTabs(
+        firstText = "Create",
+        secondText = "Edit",
+        firstSelected = selectedView == PresetSettingsView.Create,
+        onFirstClick = { onSelectedViewChange(PresetSettingsView.Create) },
+        onSecondClick = { onSelectedViewChange(PresetSettingsView.Edit) }
+    )
+}
+
+@Composable
+private fun RunsViewTabs(
+    selectedView: RunsSettingsView,
+    onSelectedViewChange: (RunsSettingsView) -> Unit
+) {
+    SettingsTwoWayTabs(
+        firstText = "Records",
+        secondText = "History",
+        firstSelected = selectedView == RunsSettingsView.Records,
+        onFirstClick = { onSelectedViewChange(RunsSettingsView.Records) },
+        onSecondClick = { onSelectedViewChange(RunsSettingsView.History) }
+    )
+}
+
+@Composable
+private fun SettingsTwoWayTabs(
+    firstText: String,
+    secondText: String,
+    firstSelected: Boolean,
+    onFirstClick: () -> Unit,
+    onSecondClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -3671,45 +3919,46 @@ private fun SettingsModeTabs(
             .padding(4.dp)
     ) {
         SettingsTabButton(
-            text = "Create",
-            selected = selectedTab == PresetSettingsTab.Create,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Create) },
-            fontSize = 12.sp,
+            text = firstText,
+            selected = firstSelected,
+            onClick = onFirstClick,
             modifier = Modifier.weight(1f)
         )
         Spacer(modifier = Modifier.width(6.dp))
         SettingsTabButton(
-            text = "Edit",
-            selected = selectedTab == PresetSettingsTab.Edit,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Edit) },
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "Records",
-            selected = selectedTab == PresetSettingsTab.Records,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Records) },
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "History",
-            selected = selectedTab == PresetSettingsTab.History,
-            onClick = { onSelectedTabChange(PresetSettingsTab.History) },
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        SettingsTabButton(
-            text = "Backup",
-            selected = selectedTab == PresetSettingsTab.Backup,
-            onClick = { onSelectedTabChange(PresetSettingsTab.Backup) },
-            fontSize = 12.sp,
+            text = secondText,
+            selected = !firstSelected,
+            onClick = onSecondClick,
             modifier = Modifier.weight(1f)
         )
     }
+}
+
+@Composable
+private fun AboutSettingsPanel(
+    updateCheckState: UpdateCheckState,
+    onOpenRelease: (String) -> Unit
+) {
+    SettingsSectionTitle("Thor Speedrun Splits")
+    Text(
+        text = "Version ${BuildConfig.VERSION_NAME}",
+        color = PrimaryText,
+        fontSize = 16.sp,
+        lineHeight = 16.sp,
+        maxLines = 1
+    )
+    Spacer(modifier = Modifier.height(10.dp))
+    UpdateCheckRow(
+        updateCheckState = updateCheckState,
+        onOpenRelease = onOpenRelease
+    )
+    Spacer(modifier = Modifier.height(18.dp))
+    Text(
+        text = "A LiveSplit-inspired timer designed for dual-screen Android handhelds.",
+        color = SecondaryText,
+        fontSize = 14.sp,
+        lineHeight = 18.sp
+    )
 }
 
 @Composable
@@ -3784,10 +4033,9 @@ private fun ThemeModeToggle(
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
-            PanelTextButton(
-                text = if (useSystemTheme) "ON" else "OFF",
-                onClick = { onUseSystemThemeChange(!useSystemTheme) },
-                modifier = Modifier.size(width = 76.dp, height = 34.dp)
+            SettingsSwitch(
+                checked = useSystemTheme,
+                onCheckedChange = onUseSystemThemeChange
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -3846,12 +4094,34 @@ private fun OledScreenShiftToggle(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        PanelTextButton(
-            text = if (enabled) "ON" else "OFF",
-            onClick = { onEnabledChange(!enabled) },
-            modifier = Modifier.size(width = 76.dp, height = 34.dp)
+        SettingsSwitch(
+            checked = enabled,
+            onCheckedChange = onEnabledChange
         )
     }
+}
+
+@Composable
+private fun SettingsSwitch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val vibrate = rememberButtonVibration()
+    Switch(
+        checked = checked,
+        onCheckedChange = { enabled ->
+            vibrate()
+            onCheckedChange(enabled)
+        },
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = OledBlack,
+            checkedTrackColor = SuccessGreen,
+            checkedBorderColor = SuccessGreen,
+            uncheckedThumbColor = SecondaryText,
+            uncheckedTrackColor = RowBlack,
+            uncheckedBorderColor = DividerColor
+        )
+    )
 }
 
 @Composable
