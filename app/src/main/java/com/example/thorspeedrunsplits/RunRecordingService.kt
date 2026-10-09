@@ -53,11 +53,13 @@ class RunRecordingService : Service() {
     private var audioOutputFile: File? = null
     private var playbackAudioCapture: PlaybackAudioCapture? = null
     private var recordAudioEnabled = false
+    private var saveOnlyCompletedRuns = false
     private var gameName = "Run"
     private var category = "Any%"
     private var recordingStartedAt = 0L
     private var isCleaningUp = false
     private var requestedRunLengthMillis: Long? = null
+    private var saveOutputOnStop = true
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -74,13 +76,19 @@ class RunRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startRecording(intent)
-            ACTION_STOP -> scheduleStop(intent.getLongExtra(EXTRA_RUN_LENGTH_MILLIS, 0L))
+            ACTION_STOP -> scheduleStop(
+                runLengthMillis = intent.getLongExtra(EXTRA_RUN_LENGTH_MILLIS, 0L),
+                saveRecording = intent.getBooleanExtra(EXTRA_SAVE_RECORDING, true)
+            )
         }
         return START_NOT_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        scheduleStop(elapsedRecordingMillis())
+        scheduleStop(
+            runLengthMillis = elapsedRecordingMillis(),
+            saveRecording = !saveOnlyCompletedRuns
+        )
         super.onTaskRemoved(rootIntent)
     }
 
@@ -113,7 +121,9 @@ class RunRecordingService : Service() {
         gameName = intent.getStringExtra(EXTRA_GAME_NAME).orEmpty().ifBlank { "Run" }
         category = intent.getStringExtra(EXTRA_CATEGORY).orEmpty().ifBlank { "Any%" }
         recordAudioEnabled = intent.getBooleanExtra(EXTRA_RECORD_AUDIO, false)
+        saveOnlyCompletedRuns = intent.getBooleanExtra(EXTRA_SAVE_ONLY_COMPLETED_RUNS, false)
         requestedRunLengthMillis = null
+        saveOutputOnStop = !saveOnlyCompletedRuns
 
         try {
             val metrics = defaultDisplayMetrics()
@@ -190,12 +200,13 @@ class RunRecordingService : Service() {
         }
     }
 
-    private fun scheduleStop(runLengthMillis: Long) {
+    private fun scheduleStop(runLengthMillis: Long, saveRecording: Boolean) {
         if (videoEncoder == null && mediaProjection == null) {
             stopSelf()
             return
         }
         requestedRunLengthMillis = runLengthMillis.coerceAtLeast(0L)
+        saveOutputOnStop = saveRecording
         mainHandler.removeCallbacks(delayedStop)
         mainHandler.postDelayed(delayedStop, RECORDING_TAIL_MILLIS)
     }
@@ -252,8 +263,7 @@ class RunRecordingService : Service() {
         videoEncoder = null
         runCatching { playbackAudioCapture?.stop() }
         playbackAudioCapture = null
-        runCatching { encoder?.stop() }
-            .onFailure { discardOutput() }
+        val encoderStopped = runCatching { encoder?.stop() }.isSuccess
         val projection = mediaProjection
         mediaProjection = null
         runCatching { projection?.unregisterCallback(projectionCallback) }
@@ -261,9 +271,14 @@ class RunRecordingService : Service() {
         outputFileDescriptor?.close()
         outputFileDescriptor = null
 
-        finalizeOutputName(runLengthMillis)
+        if (encoderStopped && saveOutputOnStop) {
+            finalizeOutputName(runLengthMillis)
+        } else {
+            discardOutput()
+        }
         recordingStartedAt = 0L
         requestedRunLengthMillis = null
+        saveOutputOnStop = true
         isRecording = false
         broadcastRecordingState(active = false)
         isCleaningUp = false
@@ -546,6 +561,8 @@ class RunRecordingService : Service() {
         private const val EXTRA_BITRATE_BITS_PER_SECOND = "bitrate_bits_per_second"
         private const val EXTRA_FRAME_RATE = "frame_rate"
         private const val EXTRA_RECORD_AUDIO = "record_audio"
+        private const val EXTRA_SAVE_ONLY_COMPLETED_RUNS = "save_only_completed_runs"
+        private const val EXTRA_SAVE_RECORDING = "save_recording"
         private const val EXTRA_RUN_LENGTH_MILLIS = "run_length_millis"
         private const val NOTIFICATION_CHANNEL_ID = "run_recording"
         private const val NOTIFICATION_ID = 6006
@@ -566,7 +583,8 @@ class RunRecordingService : Service() {
             resolutionHeight: Int,
             bitrateBitsPerSecond: Int,
             frameRate: Int,
-            recordAudio: Boolean
+            recordAudio: Boolean,
+            saveOnlyCompletedRuns: Boolean
         ) {
             val intent = Intent(context, RunRecordingService::class.java).apply {
                 action = ACTION_START
@@ -579,15 +597,21 @@ class RunRecordingService : Service() {
                 putExtra(EXTRA_BITRATE_BITS_PER_SECOND, bitrateBitsPerSecond)
                 putExtra(EXTRA_FRAME_RATE, frameRate)
                 putExtra(EXTRA_RECORD_AUDIO, recordAudio)
+                putExtra(EXTRA_SAVE_ONLY_COMPLETED_RUNS, saveOnlyCompletedRuns)
             }
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun stop(context: Context, runLengthMillis: Long) {
+        fun stop(
+            context: Context,
+            runLengthMillis: Long,
+            saveRecording: Boolean
+        ) {
             context.startService(
                 Intent(context, RunRecordingService::class.java).apply {
                     action = ACTION_STOP
                     putExtra(EXTRA_RUN_LENGTH_MILLIS, runLengthMillis)
+                    putExtra(EXTRA_SAVE_RECORDING, saveRecording)
                 }
             )
         }

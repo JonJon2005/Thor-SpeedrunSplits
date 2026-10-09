@@ -261,6 +261,7 @@ private const val FontPreferenceKey = "font_mode"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
 private const val RecordAudioPreferenceKey = "record_audio"
+private const val SaveCompletedRunRecordingsPreferenceKey = "save_completed_run_recordings"
 private const val RecordingResolutionPreferenceKey = "recording_resolution"
 private const val RecordingBitratePreferenceKey = "recording_bitrate_mbps"
 private const val RecordingFrameRatePreferenceKey = "recording_frame_rate"
@@ -1007,6 +1008,7 @@ private fun ThorSpeedrunSplitsApp() {
     var recordingFolderUri by remember { mutableStateOf<String?>(null) }
     var recordOppositeScreenEnabled by remember { mutableStateOf(false) }
     var recordAudioEnabled by remember { mutableStateOf(false) }
+    var saveCompletedRunRecordingsOnly by remember { mutableStateOf(false) }
     var recordingResolution by remember { mutableStateOf<RecordingResolution?>(null) }
     var recordingBitrateMbps by remember { mutableStateOf(DefaultRecordingBitrateMbps) }
     var recordingFrameRate by remember { mutableStateOf(DefaultRecordingFrameRate) }
@@ -1116,7 +1118,8 @@ private fun ThorSpeedrunSplitsApp() {
                 resolutionHeight = selectedResolution.height,
                 bitrateBitsPerSecond = recordingBitrateMbps * 1_000_000,
                 frameRate = recordingFrameRate,
-                recordAudio = recordAudioEnabled
+                recordAudio = recordAudioEnabled,
+                saveOnlyCompletedRuns = saveCompletedRunRecordingsOnly
             )
             recordingSessionActive = true
             screenCaptureConsent = null
@@ -1130,9 +1133,13 @@ private fun ThorSpeedrunSplitsApp() {
         }
     }
 
-    fun stopRunRecording(runLengthMillis: Long) {
+    fun stopRunRecording(runLengthMillis: Long, saveRecording: Boolean = true) {
         if (!recordingSessionActive) return
-        RunRecordingService.stop(appContext, runLengthMillis)
+        RunRecordingService.stop(
+            context = appContext,
+            runLengthMillis = runLengthMillis,
+            saveRecording = saveRecording
+        )
     }
 
     val screenCaptureConsentLauncher = rememberLauncherForActivityResult(
@@ -1232,7 +1239,10 @@ private fun ThorSpeedrunSplitsApp() {
             } else {
                 finishedElapsedMillis
             }
-            stopRunRecording(runLengthMillis)
+            stopRunRecording(
+                runLengthMillis = runLengthMillis,
+                saveRecording = !saveCompletedRunRecordingsOnly
+            )
         }
         isRunning = false
         isFinished = false
@@ -1494,6 +1504,8 @@ private fun ThorSpeedrunSplitsApp() {
             appPreferenceDao.getValue(RecordAudioPreferenceKey) == "true" &&
                 appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
+        saveCompletedRunRecordingsOnly =
+            appPreferenceDao.getValue(SaveCompletedRunRecordingsPreferenceKey) == "true"
         val savedResolution = appPreferenceDao
             .getValue(RecordingResolutionPreferenceKey)
             ?.split('x')
@@ -2013,6 +2025,7 @@ private fun ThorSpeedrunSplitsApp() {
                     recordingBitrateMbps = recordingBitrateMbps,
                     recordingFrameRate = recordingFrameRate,
                     recordAudioEnabled = recordAudioEnabled,
+                    saveCompletedRunRecordingsOnly = saveCompletedRunRecordingsOnly,
                     recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                     onRecordOppositeScreenChange = { enabled ->
                         if (enabled) {
@@ -2070,6 +2083,17 @@ private fun ThorSpeedrunSplitsApp() {
                                 AppPreferenceEntity(
                                     key = RecordingFrameRatePreferenceKey,
                                     value = normalizedFrameRate.toString()
+                                )
+                            )
+                        }
+                    },
+                    onSaveCompletedRunRecordingsOnlyChange = { enabled ->
+                        saveCompletedRunRecordingsOnly = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(
+                                    key = SaveCompletedRunRecordingsPreferenceKey,
+                                    value = enabled.toString()
                                 )
                             )
                         }
@@ -2733,7 +2757,7 @@ private fun SplitList(
     ) {
         itemsIndexed(
             items = splits,
-            key = { _, split -> split.name }
+            key = { index, _ -> index }
         ) { index, split ->
             val personalBestTime = displayedComparisonRun?.splitTimes?.getOrNull(index)
             val currentRunTime = completedTimes[index]
@@ -3105,11 +3129,13 @@ private fun SettingsPanel(
     recordingBitrateMbps: Int,
     recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
+    saveCompletedRunRecordingsOnly: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
     onRecordingFrameRateChange: (Int) -> Unit,
+    onSaveCompletedRunRecordingsOnlyChange: (Boolean) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseRecordingFolder: () -> Unit,
     onUseDefaultRecordingFolder: () -> Unit,
@@ -3271,11 +3297,13 @@ private fun SettingsPanel(
                         recordingBitrateMbps = recordingBitrateMbps,
                         recordingFrameRate = recordingFrameRate,
                         recordAudioEnabled = recordAudioEnabled,
+                        saveCompletedRunRecordingsOnly = saveCompletedRunRecordingsOnly,
                         recordOppositeScreenEnabled = recordOppositeScreenEnabled,
                         onRecordOppositeScreenChange = onRecordOppositeScreenChange,
                         onRecordingResolutionChange = onRecordingResolutionChange,
                         onRecordingBitrateChange = onRecordingBitrateChange,
                         onRecordingFrameRateChange = onRecordingFrameRateChange,
+                        onSaveCompletedRunRecordingsOnlyChange = onSaveCompletedRunRecordingsOnlyChange,
                         onRecordAudioChange = onRecordAudioChange,
                         onChooseFolder = onChooseRecordingFolder,
                         onUseDefaultFolder = onUseDefaultRecordingFolder
@@ -4471,11 +4499,13 @@ private fun RecordingSettingsPanel(
     recordingBitrateMbps: Int,
     recordingFrameRate: Int,
     recordAudioEnabled: Boolean,
+    saveCompletedRunRecordingsOnly: Boolean,
     recordOppositeScreenEnabled: Boolean,
     onRecordOppositeScreenChange: (Boolean) -> Unit,
     onRecordingResolutionChange: (RecordingResolution) -> Unit,
     onRecordingBitrateChange: (Int) -> Unit,
     onRecordingFrameRateChange: (Int) -> Unit,
+    onSaveCompletedRunRecordingsOnlyChange: (Boolean) -> Unit,
     onRecordAudioChange: (Boolean) -> Unit,
     onChooseFolder: () -> Unit,
     onUseDefaultFolder: () -> Unit
@@ -4524,6 +4554,37 @@ private fun RecordingSettingsPanel(
         fontSize = 12.sp,
         lineHeight = 15.sp
     )
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Save only completed run recordings",
+                color = PrimaryText,
+                fontSize = 15.sp,
+                lineHeight = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Discard a recording when the run is reset",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        SettingsSwitch(
+            checked = saveCompletedRunRecordingsOnly,
+            onCheckedChange = onSaveCompletedRunRecordingsOnlyChange
+        )
+    }
     if (currentDisplayId == InternalDisplayId) {
         Spacer(modifier = Modifier.height(6.dp))
         Text(
