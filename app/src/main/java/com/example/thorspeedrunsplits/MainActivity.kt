@@ -59,6 +59,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -277,6 +279,7 @@ private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
 private const val InvertBottomLayoutPreferenceKey = "invert_bottom_layout"
 private const val FontPreferenceKey = "font_mode"
+private const val StartCountdownPreferenceKey = "start_countdown_seconds"
 private const val TimePrecisionPreferenceKey = "time_precision"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
@@ -1186,6 +1189,7 @@ private fun ThorSpeedrunSplitsContent() {
     var editCategory by remember { mutableStateOf("") }
     var nextEditSegmentId by remember { mutableStateOf(0) }
     val editSegments = remember { mutableStateListOf<DraftSplitSegment>() }
+    var startCountdownSeconds by remember { mutableStateOf(0) }
     var startedAtMillis by remember { mutableLongStateOf(0L) }
     var finishedElapsedMillis by remember { mutableLongStateOf(0L) }
     var nowMillis by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
@@ -1253,7 +1257,7 @@ private fun ThorSpeedrunSplitsContent() {
         runComparison = savedRuns[presetName]
             ?.takeIf { it.splitTimes.size == activePreset.segments.size }
         isRunning = true
-        startedAtMillis = pressTime
+        startedAtMillis = pressTime + startCountdownSeconds * 1000L
         nowMillis = pressTime
         if (recordOppositeScreenEnabled && consent != null) {
             val selectedResolution = recordingResolution
@@ -1385,7 +1389,7 @@ private fun ThorSpeedrunSplitsContent() {
     fun resetRun(segmentCount: Int) {
         if (recordingSessionActive) {
             val runLengthMillis = if (isRunning && startedAtMillis > 0L) {
-                SystemClock.elapsedRealtime() - startedAtMillis
+                (SystemClock.elapsedRealtime() - startedAtMillis).coerceAtLeast(0L)
             } else {
                 finishedElapsedMillis
             }
@@ -1692,6 +1696,9 @@ private fun ThorSpeedrunSplitsContent() {
         timePrecision = TimePrecision.fromStorageValue(
             appPreferenceDao.getValue(TimePrecisionPreferenceKey)
         )
+        startCountdownSeconds = parseStartCountdownSeconds(
+            appPreferenceDao.getValue(StartCountdownPreferenceKey).orEmpty()
+        ) ?: 0
         activePreset = restoredPreset
         resetRun(restoredPreset.segments.size)
     }
@@ -1748,7 +1755,7 @@ private fun ThorSpeedrunSplitsContent() {
     val elapsedMillis = when {
         isRunning -> nowMillis - startedAtMillis
         isFinished -> finishedElapsedMillis
-        else -> 0L
+        else -> -startCountdownSeconds * 1000L
     }
     val currentSegmentElapsedMillis = when {
         isRunning -> elapsedMillis - (completedTimes.getOrNull(activeSplitIndex - 1) ?: 0L)
@@ -1897,7 +1904,7 @@ private fun ThorSpeedrunSplitsContent() {
                     modifier = Modifier.weight(1f)
                 )
                 BottomControls(
-                    buttonEnabled = true,
+                    buttonEnabled = !isRunning || elapsedMillis >= 0L,
                     buttonText = if (isFinished) "DONE" else "SPLIT",
                     buttonSize = splitButtonSize,
                     resetButtonSize = resetButtonSize,
@@ -1909,7 +1916,7 @@ private fun ThorSpeedrunSplitsContent() {
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
-                    timerText = formatSeconds(elapsedMillis),
+                    timerText = formatRunTimer(elapsedMillis, timePrecision.decimals),
                     segmentTimerText = formatSeconds(currentSegmentElapsedMillis),
                     timerColor = timerTextColor,
                     timerSize = timerSize,
@@ -1942,6 +1949,7 @@ private fun ThorSpeedrunSplitsContent() {
                         }
 
                         val splitElapsed = pressTime - startedAtMillis
+                        if (splitElapsed < 0L) return@BottomControls
                         val previousSplitElapsed = if (activeSplitIndex == 0) {
                             0L
                         } else {
@@ -2162,6 +2170,15 @@ private fun ThorSpeedrunSplitsContent() {
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
                     oledScreenShiftEnabled = oledScreenShiftEnabled,
+                    startCountdownSeconds = startCountdownSeconds,
+                    onStartCountdownChange = { seconds ->
+                        startCountdownSeconds = seconds
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(StartCountdownPreferenceKey, seconds.toString())
+                            )
+                        }
+                    },
                     timePrecision = timePrecision,
                     onTimePrecisionChange = { precision ->
                         timePrecision = precision
@@ -3429,6 +3446,8 @@ private fun SettingsPanel(
     requireHoldToReset: Boolean,
     invertBottomLayout: Boolean,
     selectedFontMode: AppFontMode,
+    startCountdownSeconds: Int,
+    onStartCountdownChange: (Int) -> Unit,
     timePrecision: TimePrecision,
     onTimePrecisionChange: (TimePrecision) -> Unit,
     updateCheckState: UpdateCheckState,
@@ -3577,6 +3596,8 @@ private fun SettingsPanel(
                 )
                 Spacer(modifier = Modifier.height(20.dp))
                 SettingsSectionTitle("Run Controls", Icons.Filled.Refresh)
+                StartCountdownInput(startCountdownSeconds, onStartCountdownChange)
+                Spacer(modifier = Modifier.height(12.dp))
                 RequireHoldToResetToggle(
                     enabled = requireHoldToReset,
                     onEnabledChange = onRequireHoldToResetChange
@@ -5448,6 +5469,49 @@ private fun SettingsSwitch(
             uncheckedBorderColor = DividerColor
         )
     )
+}
+
+@Composable
+private fun StartCountdownInput(seconds: Int, onSave: (Int) -> Unit) {
+    var input by remember(seconds) { mutableStateOf(seconds.toString()) }
+    val parsed = parseStartCountdownSeconds(input)
+    Column {
+        Text(text = "Start offset (seconds)", color = PrimaryText, fontSize = 15.sp)
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "−", color = PrimaryText, fontSize = 20.sp)
+            Spacer(modifier = Modifier.width(8.dp))
+            BasicTextField(
+                value = input,
+                onValueChange = { value ->
+                    if (value.length <= 5 && value.all { it in '0'..'9' }) input = value
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                textStyle = TextStyle(
+                    color = PrimaryText, fontSize = 17.sp,
+                    fontFamily = LocalAppFontFamily.current
+                ),
+                modifier = Modifier.weight(1f).height(44.dp)
+                    .background(RowBlack).border(1.dp, DividerColor)
+                    .padding(horizontal = 10.dp, vertical = 12.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            PanelTextButton(
+                text = "SAVE",
+                enabled = parsed != null && parsed != seconds,
+                onClick = { parsed?.let(onSave) },
+                modifier = Modifier.width(90.dp).height(44.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = if (parsed == null) "Enter 0–3600 seconds."
+                else "Counts up from a negative time. 0 disables it. Changes apply to the next run.",
+            color = if (parsed == null) BehindRed else SecondaryText,
+            fontSize = 13.sp
+        )
+    }
 }
 
 @Composable

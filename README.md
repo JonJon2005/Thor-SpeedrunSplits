@@ -35,6 +35,8 @@ You can add it to <b>Obtainium</b> here:
 - Consistent app-wide sizing independent of Android font-size and display-size settings, with uniform scaling based on the available window.
 - Immersive fullscreen layout optimized for the AYN Thor's 1080x1240 AMOLED display, with large targets, long-title handling, and dual-screen-aware display labeling.
 
+- Optional saved start offset with numeric seconds input: count up from a negative time before each run, with splitting enabled at zero.
+
 ## Screenshots
 
 Home and settings drawer:
