@@ -277,6 +277,7 @@ private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
 private const val InvertBottomLayoutPreferenceKey = "invert_bottom_layout"
 private const val FontPreferenceKey = "font_mode"
+private const val TimePrecisionPreferenceKey = "time_precision"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
 private const val RecordOppositeScreenPreferenceKey = "record_opposite_screen"
 private const val RecordAudioPreferenceKey = "record_audio"
@@ -965,6 +966,19 @@ private enum class AppThemeMode(
     }
 }
 
+private enum class TimePrecision(val storageValue: String, val label: String, val decimals: Int) {
+    Whole("whole", "WHOLE", 0),
+    Tenths("tenths", "TENTHS", 1),
+    Hundredths("hundredths", "HUNDREDTHS", 2);
+
+    companion object {
+        fun fromStorageValue(value: String?): TimePrecision =
+            entries.firstOrNull { it.storageValue == value } ?: Tenths
+    }
+}
+
+private val LocalTimePrecision = staticCompositionLocalOf { TimePrecision.Tenths }
+
 private enum class AppFontMode(
     val storageValue: String,
     val label: String,
@@ -1123,6 +1137,7 @@ private fun ThorSpeedrunSplitsApp() {
     var invertBottomLayout by remember { mutableStateOf(false) }
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
+    var timePrecision by remember { mutableStateOf(TimePrecision.Tenths) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
     var recordingFolderUri by remember { mutableStateOf<String?>(null) }
@@ -1669,6 +1684,9 @@ private fun ThorSpeedrunSplitsApp() {
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
+        timePrecision = TimePrecision.fromStorageValue(
+            appPreferenceDao.getValue(TimePrecisionPreferenceKey)
+        )
         activePreset = restoredPreset
         resetRun(restoredPreset.segments.size)
     }
@@ -1719,6 +1737,7 @@ private fun ThorSpeedrunSplitsApp() {
     CompositionLocalProvider(
         LocalAppThemeColors provides colorsForTheme(effectiveThemeMode),
         LocalAppFontFamily provides selectedFontFamily,
+        LocalTimePrecision provides timePrecision,
         LocalTextStyle provides defaultTextStyle.copy(fontFamily = selectedFontFamily)
     ) {
     val elapsedMillis = when {
@@ -1743,7 +1762,7 @@ private fun ThorSpeedrunSplitsApp() {
             segmentTimes.size == activePreset.segments.size && segmentTimes.all { it != null }
         }
         ?.sumOf { it ?: 0L }
-        ?.let(::formatDuration)
+        ?.let { formatDuration(it) }
     val latestCompletedSplitDeltaMillis = if (isRunning || isFinished) {
         completedTimes.indices.reversed().firstNotNullOfOrNull { index ->
             val completedTime = completedTimes.getOrNull(index)
@@ -2138,6 +2157,15 @@ private fun ThorSpeedrunSplitsApp() {
                     effectiveThemeMode = effectiveThemeMode,
                     useSystemTheme = useSystemTheme,
                     oledScreenShiftEnabled = oledScreenShiftEnabled,
+                    timePrecision = timePrecision,
+                    onTimePrecisionChange = { precision ->
+                        timePrecision = precision
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(TimePrecisionPreferenceKey, precision.storageValue)
+                            )
+                        }
+                    },
                     requireHoldToReset = requireHoldToReset,
                     invertBottomLayout = invertBottomLayout,
                     selectedFontMode = selectedFontMode,
@@ -2989,14 +3017,14 @@ private fun SplitList(
             }
             SplitRow(
                 split = split,
-                comparisonTime = displayedTime?.let(::formatSeconds) ?: "--",
+                comparisonTime = displayedTime?.let { formatSeconds(it) } ?: "--",
                 hasComparisonTime = displayedTime != null,
                 comparisonTimeColor = if (isGoldSplit && deltaMillis == null) {
                     GoldSplit
                 } else {
                     null
                 },
-                deltaText = deltaMillis?.let(::formatDeltaSeconds),
+                deltaText = deltaMillis?.let { formatDeltaSeconds(it) },
                 deltaColor = deltaMillis?.let {
                     when {
                         isGoldSplit -> GoldSplit
@@ -3396,6 +3424,8 @@ private fun SettingsPanel(
     requireHoldToReset: Boolean,
     invertBottomLayout: Boolean,
     selectedFontMode: AppFontMode,
+    timePrecision: TimePrecision,
+    onTimePrecisionChange: (TimePrecision) -> Unit,
     updateCheckState: UpdateCheckState,
     onOpenRelease: (String) -> Unit,
     onSelectedThemeModeChange: (AppThemeMode) -> Unit,
@@ -3533,6 +3563,8 @@ private fun SettingsPanel(
                     enabled = oledScreenShiftEnabled,
                     onEnabledChange = onOledScreenShiftChange
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                TimePrecisionToggle(timePrecision, onTimePrecisionChange)
                 Spacer(modifier = Modifier.height(12.dp))
                 FontModeToggle(
                     selectedFontMode = selectedFontMode,
@@ -4103,7 +4135,7 @@ private fun RecordSplitRow(
             modifier = Modifier.weight(1f)
         )
         Text(
-            text = personalBestTime?.let(::formatSeconds) ?: "--",
+            text = personalBestTime?.let { formatSeconds(it) } ?: "--",
             color = if (personalBestTime == null) SecondaryText else PrimaryText,
             fontSize = 14.sp,
             lineHeight = 14.sp,
@@ -4113,7 +4145,7 @@ private fun RecordSplitRow(
         )
         Spacer(modifier = Modifier.width(10.dp))
         Text(
-            text = bestSegmentTime?.let(::formatSeconds) ?: "--",
+            text = bestSegmentTime?.let { formatSeconds(it) } ?: "--",
             color = if (bestSegmentTime == null) SecondaryText else GoldSplit,
             fontSize = 14.sp,
             lineHeight = 14.sp,
@@ -4420,7 +4452,7 @@ private fun HistoricalRunSplitRow(
             modifier = Modifier.width(68.dp)
         )
         Text(
-            text = splitDelta?.let(::formatDeltaSeconds) ?: "--",
+            text = splitDelta?.let { formatDeltaSeconds(it) } ?: "--",
             color = when {
                 splitDelta == null -> SecondaryText
                 splitDelta <= 0L -> SuccessGreen
@@ -5414,6 +5446,37 @@ private fun SettingsSwitch(
 }
 
 @Composable
+private fun TimePrecisionToggle(
+    selected: TimePrecision,
+    onSelected: (TimePrecision) -> Unit
+) {
+    Column {
+        Text(text = "Time precision", color = PrimaryText, fontSize = 15.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().height(42.dp)
+                .border(1.dp, DividerColor).background(RowBlack).padding(4.dp)
+        ) {
+            TimePrecision.entries.forEachIndexed { index, precision ->
+                if (index > 0) Spacer(modifier = Modifier.width(6.dp))
+                SettingsTabButton(
+                    text = precision.label,
+                    selected = selected == precision,
+                    onClick = { onSelected(precision) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Example: ${formatTimeValue(83456L, selected.decimals)}",
+            color = SecondaryText,
+            fontSize = 13.sp
+        )
+    }
+}
+
+@Composable
 private fun FontModeToggle(
     selectedFontMode: AppFontMode,
     onSelectedFontModeChange: (AppFontMode) -> Unit
@@ -6151,13 +6214,15 @@ private fun FadingButtonText(
     }
 }
 
+@Composable
 private fun formatSeconds(milliseconds: Long): String {
-    return formatTimeValue(milliseconds)
+    return formatTimeValue(milliseconds, LocalTimePrecision.current.decimals)
 }
 
+@Composable
 private fun formatDeltaSeconds(milliseconds: Long): String {
     val sign = if (milliseconds >= 0L) "+" else "-"
-    return "$sign${formatTimeValue(kotlin.math.abs(milliseconds))}"
+    return "$sign${formatTimeValue(kotlin.math.abs(milliseconds), LocalTimePrecision.current.decimals)}"
 }
 
 private suspend fun fetchLatestGithubRelease(): GithubRelease = withContext(Dispatchers.IO) {
@@ -6228,8 +6293,9 @@ private fun liveActiveSplitDeltaMillis(
     return currentDelta.takeIf { it > segmentStartDelta }
 }
 
+@Composable
 private fun formatDuration(milliseconds: Long): String {
-    return formatTimeValue(milliseconds)
+    return formatTimeValue(milliseconds, LocalTimePrecision.current.decimals)
 }
 
 private fun formatDateTime(milliseconds: Long): String {
@@ -6238,24 +6304,6 @@ private fun formatDateTime(milliseconds: Long): String {
         .lowercase(Locale.US)
 }
 
-private fun formatTimeValue(milliseconds: Long): String {
-    val totalSeconds = milliseconds.coerceAtLeast(0L) / 1000.0
-    val hours = (totalSeconds / 3600).toInt()
-    val minutes = ((totalSeconds % 3600) / 60).toInt()
-    val seconds = totalSeconds % 60
-
-    return when {
-        hours > 0 -> {
-            String.format(Locale.US, "%d:%02d:%04.1f", hours, minutes, seconds)
-        }
-        minutes > 0 -> {
-            String.format(Locale.US, "%d:%04.1f", minutes, seconds)
-        }
-        else -> {
-            String.format(Locale.US, "%.1f", seconds)
-        }
-    }
-}
 
 @Preview(showBackground = true, widthDp = 620, heightDp = 540)
 @Composable

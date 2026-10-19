@@ -4,7 +4,7 @@ Thor Speedrun Splits - Project Context
 Purpose
 -------
 - Build an open-source Android app for Thor speedrun split tracking.
-- Current app state: Compose prototype with LiveSplit-like rows, manual split/undo controls, one-decimal timer, Room-backed split preset creation/loading, PB comparison, completed-run history/details, and JSON backup/restore.
+- Current app state: Compose prototype with LiveSplit-like rows, manual split/undo controls, configurable-precision timer, Room-backed split preset creation/loading, PB comparison, completed-run history/details, and JSON backup/restore.
 
 Workflow Rule
 -------------
@@ -43,8 +43,8 @@ Design Language
   - OLED-friendly near-black background.
   - Fixed dark system bars and Compose dark theme with dynamic color disabled.
   - App runs in immersive fullscreen: Android status bar and navigation/swipe bar should be hidden because the AYN Thor has physical/back-home controls available for this use case.
-  - Timer and split times use one decimal place without a seconds suffix.
-  - Timing displays should omit the minutes column until it is reached: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
+  - Timer and split times use the persisted Time precision setting: Whole, Tenths (default), or Hundredths, without a seconds suffix. Display values truncate at the selected precision; stored milliseconds remain unchanged.
+  - Timing displays should omit the minutes column until it is reached; examples at the default tenths precision: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
   - Right-aligned split time and delta columns must reserve enough width for wider custom font numerals so decimal digits are not clipped.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
   - Long game/category title text should scale down and ellipsize within the title region instead of overlapping stats, settings, or split rows.
@@ -174,7 +174,7 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.6.1"` and `versionCode = 9`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.7"` and `versionCode = 10`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
 - Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
@@ -347,3 +347,5 @@ Change Log
 - 2026-10-09: Added a live home-screen current-segment timer alongside the overall timer; it resets on each split, follows undo changes, and retains the final segment duration after a completed run.
 - 2026-10-09: Linked completed-run history to matching MP4 files in the active recording location using the stable game/category/run-duration filename prefix; history rows now show `VIEW RUN` when a video is found or `NO VIDEO` otherwise, opening the file through Android's external viewer.
 - [APK] v0.6.1 released
+- 2026-10-19: Created a fresh `v0.7` development branch from updated `main` (including merged v0.6.1), bumped app metadata to versionName 0.7/versionCode 10.
+- 2026-10-19: Added a persisted Time precision selector under Customization with Whole, Tenths, and Hundredths choices and a live example. Applies to overall/segment timers, split comparisons and deltas, run history, records, and duration stats. Added formatting tests for truncation and minute/hour boundaries.

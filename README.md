@@ -18,7 +18,7 @@ You can add it to <b>Obtainium</b> here:
 
 ## Features
 
-- LiveSplit-style timer with color-coded split rows, one-decimal formatting, PB comparisons, live ahead/behind deltas, golds/best segments, automatic active-row scrolling, and manual scroll-back.
+- LiveSplit-style timer with color-coded split rows, selectable whole-second, tenths, or hundredths formatting, PB comparisons, live ahead/behind deltas, golds/best segments, automatic active-row scrolling, and manual scroll-back.
 - Large touch controls for starting, splitting, undoing, resetting, and finishing runs, with haptics, pressed states, and subtle animations; RESET requires a visible half-second hold by default to avoid accidental resets, with an optional quick-tap setting.
 - Live overall and current-segment timers on the home screen, so each split's duration is visible while the run is in progress.
 - Run History detects matching MP4 recordings in the active recording folder and opens them in an installed Android video/files app; runs without a match are clearly marked unavailable.
