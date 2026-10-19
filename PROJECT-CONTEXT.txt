@@ -11,6 +11,7 @@ Workflow Rule
 - Before starting future work in this repository, read this file first.
 - After each meaningful user request, update this file with new product direction, design language, technical decisions, and implementation status.
 - Keep this file concise and factual. Prefer durable project context over transient command logs.
+- Commit messages must follow the user's format: `[TYPE] - Description`, using tags such as `[FEAT]`, `[FIX]`, `[DOCS]`, and `[APK]` to match the change.
 
 Product Direction
 -----------------
