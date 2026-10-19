@@ -1112,6 +1112,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun ThorSpeedrunSplitsApp() {
+    FixedAppScale { ThorSpeedrunSplitsContent() }
+}
+
+@Composable
+private fun ThorSpeedrunSplitsContent() {
     val appContext = LocalContext.current.applicationContext
     val database = remember {
         ThorSpeedrunDatabase.getInstance(appContext)

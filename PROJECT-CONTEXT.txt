@@ -177,7 +177,8 @@ Technical Notes
 - License: MIT.
 - App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.7"` and `versionCode = 10`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
-- Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
+- Target hardware context: AYN Thor bottom screen, 1240x1080 pixels in landscape, 3.92 inch AMOLED, 60 Hz.
+- Compose UI uses FixedAppScale: raw window pixel constraints determine a uniform density relative to the real Thor bottom display baseline of 1240x1080 pixels at 369 logical DPI (about 538x468 dp), measured over wireless ADB with no density override. Font scale is fixed at 1.0; Android font-size and display-size preferences do not resize the app UI. Existing layout structure and custom font/precision selections remain intact. System dialogs and keyboard retain system scaling.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
 - Haptics: use Android `Vibrator`/`VibratorManager` with a subtle tick effect for button presses; app declares the normal `android.permission.VIBRATE` permission.
 - Updater: app declares `android.permission.INTERNET`, automatically calls GitHub's latest release API at `https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest` on app launch, compares the release tag to `BuildConfig.VERSION_NAME`, and opens the release page in an external browser instead of downloading/installing APKs in-app.
@@ -350,3 +351,4 @@ Change Log
 - [APK] v0.6.1 released
 - 2026-10-19: Created a fresh `v0.7` development branch from updated `main` (including merged v0.6.1), bumped app metadata to versionName 0.7/versionCode 10.
 - 2026-10-19: Added a persisted Time precision selector under Customization with Whole, Tenths, and Hundredths choices and a live example. Applies to overall/segment timers, split comparisons and deltas, run history, records, and duration stats. Added formatting tests for truncation and minute/hour boundaries.
+- 2026-10-19: Added fixed app-wide Compose density at the measured real Thor baseline of 369 DPI and font scale 1.0, preserving existing layout structure regardless of user font/display scaling. No size options were added. Scaling follows window pixel size and handles rotation and window resizing.
