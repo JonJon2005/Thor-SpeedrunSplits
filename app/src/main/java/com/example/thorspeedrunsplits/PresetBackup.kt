@@ -11,7 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal const val BackupFormatId = "thor-speedrun-splits-backup"
-internal const val BackupSchemaVersion = 1
+internal const val BackupSchemaVersion = 2
 private const val MaxBackupBytes = 25L * 1024L * 1024L
 private const val MaxBackupCharacters = 25 * 1024 * 1024
 private const val MaxBackupPresetCount = 500
@@ -59,7 +59,7 @@ internal data class BackupHistoricalRun(
 
 internal data class BackupHistoricalSplit(
     val segmentName: String,
-    val splitTimeMillis: Long,
+    val splitTimeMillis: Long?,
     val comparisonSplitTimeMillis: Long?,
     val wasGold: Boolean
 )
@@ -128,7 +128,7 @@ internal fun parseBackupBundle(json: String): BackupBundle {
         "This JSON file is not a Thor Speedrun Splits backup."
     }
     val schemaVersion = root.getInt("schemaVersion")
-    require(schemaVersion == BackupSchemaVersion) {
+    require(schemaVersion in 1..BackupSchemaVersion) {
         "Backup schema v$schemaVersion is not supported by this app version."
     }
     val presetArray = root.getJSONArray("presets")
@@ -136,7 +136,7 @@ internal fun parseBackupBundle(json: String): BackupBundle {
         "The backup must contain between 1 and $MaxBackupPresetCount presets."
     }
     val presets = List(presetArray.length()) { index ->
-        presetArray.getJSONObject(index).toBackupPreset(index)
+        presetArray.getJSONObject(index).toBackupPreset(index, schemaVersion)
     }
     require(presets.map { it.presetName }.distinct().size == presets.size) {
         "The backup contains duplicate preset names."
@@ -251,7 +251,7 @@ private fun BackupHistoricalRun.toJsonObject(): JSONObject {
                         JSONObject()
                             .put("position", index)
                             .put("segmentName", split.segmentName)
-                            .put("splitTimeMillis", split.splitTimeMillis)
+                            .put("splitTimeMillis", split.splitTimeMillis ?: JSONObject.NULL)
                             .put(
                                 "comparisonSplitTimeMillis",
                                 split.comparisonSplitTimeMillis ?: JSONObject.NULL
@@ -271,7 +271,7 @@ private fun List<Long?>.toNullableLongJsonArray(): JSONArray {
     }
 }
 
-private fun JSONObject.toBackupPreset(presetIndex: Int): BackupPreset {
+private fun JSONObject.toBackupPreset(presetIndex: Int, schemaVersion: Int): BackupPreset {
     val presetLabel = "Preset ${presetIndex + 1}"
     val segmentArray = getJSONArray("segments")
     require(segmentArray.length() in 1..MaxBackupSegmentCount) {
@@ -320,7 +320,8 @@ private fun JSONObject.toBackupPreset(presetIndex: Int): BackupPreset {
         bestSegmentTimesMillis = bestSegmentTimes,
         runHistory = List(historyArray.length()) { index ->
             historyArray.getJSONObject(index).toBackupHistoricalRun(
-                label = "$presetLabel run ${index + 1}"
+                label = "$presetLabel run ${index + 1}",
+                schemaVersion = schemaVersion
             )
         }
     )
@@ -342,7 +343,7 @@ private fun JSONObject.toBackupPersonalBest(
     )
 }
 
-private fun JSONObject.toBackupHistoricalRun(label: String): BackupHistoricalRun {
+private fun JSONObject.toBackupHistoricalRun(label: String, schemaVersion: Int): BackupHistoricalRun {
     val splitArray = getJSONArray("splits")
     require(splitArray.length() in 1..MaxBackupSegmentCount) {
         "$label has an invalid split count."
@@ -352,14 +353,25 @@ private fun JSONObject.toBackupHistoricalRun(label: String): BackupHistoricalRun
         require(split.getInt("position") == index) {
             "$label has invalid split ordering."
         }
+        require(split.has("splitTimeMillis")) { "$label is missing a split time." }
         BackupHistoricalSplit(
             segmentName = split.requiredString("segmentName"),
-            splitTimeMillis = split.requiredNonNegativeLong("splitTimeMillis"),
+            splitTimeMillis = if (schemaVersion >= 2) {
+                split.optionalNonNegativeLong("splitTimeMillis")
+            } else {
+                split.requiredNonNegativeLong("splitTimeMillis")
+            },
             comparisonSplitTimeMillis = split.optionalNonNegativeLong(
                 "comparisonSplitTimeMillis"
             ),
             wasGold = split.getBoolean("wasGold")
         )
+    }
+    val historicalTimes = splits.map { it.splitTimeMillis }
+    splits.forEachIndexed { index, split ->
+        require(!split.wasGold || isolatedSegmentDuration(historicalTimes, index) != null) {
+            "$label awards a gold to an unknown segment duration."
+        }
     }
     validateCumulativeTimes(splits.map { it.splitTimeMillis }, label)
     validateCumulativeTimes(splits.map { it.comparisonSplitTimeMillis }, "$label comparison")

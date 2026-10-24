@@ -182,7 +182,7 @@ private data class Run(
 
 private data class HistoricalSplit(
     val segmentName: String,
-    val splitTimeMillis: Long,
+    val splitTimeMillis: Long?,
     val comparisonSplitTimeMillis: Long?,
     val wasGold: Boolean
 )
@@ -269,7 +269,7 @@ private data class PreparedBackupPresetImport(
 private data class HistoricalRunImportKey(
     val completedAtMillis: Long,
     val finalTimeMillis: Long,
-    val splits: List<Pair<String, Long>>
+    val splits: List<Pair<String, Long?>>
 )
 
 private const val LoadedPresetPreferenceKey = "loaded_preset_name"
@@ -714,13 +714,10 @@ private fun BackupHistoricalRun.toHistoricalRun(presetName: String): HistoricalR
 private fun betterPersonalBest(first: Run?, second: Run?): Run? {
     if (first == null) return second
     if (second == null) return first
-    val firstTimedSplitCount = first.splitTimes.count { it != null }
-    val secondTimedSplitCount = second.splitTimes.count { it != null }
-    return when {
-        secondTimedSplitCount > firstTimedSplitCount -> second
-        secondTimedSplitCount < firstTimedSplitCount -> first
-        second.finalTime < first.finalTime -> second
-        else -> first
+    return if (shouldReplacePersonalBest(second.finalTime, second.splitTimes, first.finalTime, first.splitTimes)) {
+        second
+    } else {
+        first
     }
 }
 
@@ -1758,9 +1755,9 @@ private fun ThorSpeedrunSplitsContent() {
         else -> -startCountdownSeconds * 1000L
     }
     val currentSegmentElapsedMillis = when {
-        isRunning -> elapsedMillis - (completedTimes.getOrNull(activeSplitIndex - 1) ?: 0L)
+        isRunning -> elapsedMillis - lastTimedSplitBefore(completedTimes, activeSplitIndex)
         isFinished -> finishedElapsedMillis -
-            (completedTimes.getOrNull(activePreset.segments.lastIndex - 1) ?: 0L)
+            lastTimedSplitBefore(completedTimes, activePreset.segments.lastIndex)
         else -> 0L
     }.coerceAtLeast(0L)
     val savedRunForActivePreset = savedRuns[activePreset.presetName]
@@ -1867,13 +1864,14 @@ private fun ThorSpeedrunSplitsContent() {
             val rowTextSize = if (isWideThorShape) 18.sp else 20.sp
             val timerSize = if (isWideThorShape) 54.sp else 62.sp
             val bottomButtonSide = if (isWideThorShape) 104.dp else 112.dp
+            val controlButtonHeight = bottomHeight - 12.dp
             val splitButtonSize = ButtonSize(
                 width = bottomButtonSide,
-                height = bottomButtonSide
+                height = controlButtonHeight
             )
             val resetButtonSize = ButtonSize(
-                width = bottomButtonSide,
-                height = bottomButtonSide
+                width = bottomButtonSide * 1.25f,
+                height = controlButtonHeight
             )
 
             Column(modifier = Modifier.fillMaxSize()) {
@@ -1911,13 +1909,17 @@ private fun ThorSpeedrunSplitsContent() {
                     showResetButton = isRunning,
                     showUndoButton = isRunning,
                     undoButtonEnabled = isRunning && activeSplitIndex > 0,
+                    skipButtonEnabled = isRunning && elapsedMillis >= 0L &&
+                        activeSplitIndex < activePreset.segments.lastIndex,
                     requireHoldToReset = requireHoldToReset,
                     invertBottomLayout = invertBottomLayout,
                     sumOfBestText = sumOfBestText,
                     attemptedRuns = activePresetStats.attemptedRuns,
                     totalTimeText = formatDuration(displayedTotalTimeMillis),
                     timerText = formatRunTimer(elapsedMillis, timePrecision.decimals),
-                    segmentTimerText = formatSeconds(currentSegmentElapsedMillis),
+                    segmentTimerText = if ((isRunning || isFinished) && activeSplitIndex > 0 &&
+                        completedTimes[activeSplitIndex - 1] == null) "--"
+                    else formatSeconds(currentSegmentElapsedMillis),
                     timerColor = timerTextColor,
                     timerSize = timerSize,
                     modifier = Modifier
@@ -1959,7 +1961,8 @@ private fun ThorSpeedrunSplitsContent() {
                         val currentSegmentBest = activeBestSegments
                             ?.segmentTimes
                             ?.getOrNull(activeSplitIndex)
-                        if (currentSegmentBest == null || segmentElapsed < currentSegmentBest) {
+                        if ((activeSplitIndex == 0 || completedTimes[activeSplitIndex - 1] != null) &&
+                            (currentSegmentBest == null || segmentElapsed < currentSegmentBest)) {
                             bestSegmentRollbackValues[activeSplitIndex] =
                                 currentSegmentBest ?: UntimedSplitSentinel
                             val updatedSegmentTimes = MutableList(activePreset.segments.size) { index ->
@@ -2000,13 +2003,7 @@ private fun ThorSpeedrunSplitsContent() {
                             }
                             val completedRun = Run(
                                 presetName = activePreset.presetName,
-                                splitTimes = completedTimes.mapIndexed { index, time ->
-                                    when {
-                                        index == activeSplitIndex -> splitElapsed
-                                        time != null -> time
-                                        else -> splitElapsed
-                                    }
-                                },
+                                splitTimes = completedTimes.toList(),
                                 finalTime = splitElapsed,
                                 completedAtMillis = System.currentTimeMillis()
                             )
@@ -2014,8 +2011,10 @@ private fun ThorSpeedrunSplitsContent() {
                             val isNewPersonalBest =
                                 currentBest == null ||
                                 currentBest.splitTimes.size != completedRun.splitTimes.size ||
-                                currentBest.splitTimes.any { it == null } ||
-                                completedRun.finalTime < currentBest.finalTime
+                                shouldReplacePersonalBest(
+                                    completedRun.finalTime, completedRun.splitTimes,
+                                    currentBest.finalTime, currentBest.splitTimes
+                                )
                             val historicalRun = HistoricalRun(
                                 id = 0L,
                                 presetName = activePreset.presetName,
@@ -2024,8 +2023,7 @@ private fun ThorSpeedrunSplitsContent() {
                                 splits = activePreset.segments.mapIndexed { index, segment ->
                                     HistoricalSplit(
                                         segmentName = segment.name,
-                                        splitTimeMillis = completedRun.splitTimes[index]
-                                            ?: splitElapsed,
+                                        splitTimeMillis = completedRun.splitTimes[index],
                                         comparisonSplitTimeMillis = runComparison
                                             ?.splitTimes
                                             ?.getOrNull(index),
@@ -2057,6 +2055,15 @@ private fun ThorSpeedrunSplitsContent() {
                                 }
                             }
                         } else {
+                            activeSplitIndex += 1
+                            nowMillis = pressTime
+                        }
+                    },
+                    onSkip = {
+                        val pressTime = SystemClock.elapsedRealtime()
+                        if (isRunning && pressTime >= startedAtMillis &&
+                            activeSplitIndex < activePreset.segments.lastIndex) {
+                            completedTimes[activeSplitIndex] = null
                             activeSplitIndex += 1
                             nowMillis = pressTime
                         }
@@ -3017,6 +3024,7 @@ private fun SplitList(
             key = { index, _ -> index }
         ) { index, split ->
             val personalBestTime = displayedComparisonRun?.splitTimes?.getOrNull(index)
+            val isSkipped = (isRunning || isFinished) && index < activeSplitIndex && completedTimes[index] == null
             val currentRunTime = completedTimes[index]
             val displayedTime = personalBestTime ?: currentRunTime
             val isGoldSplit = index in goldSplitIndices
@@ -3046,7 +3054,7 @@ private fun SplitList(
                 } else {
                     null
                 },
-                deltaText = deltaMillis?.let { formatDeltaSeconds(it) },
+                deltaText = if (isSkipped) "SKIP" else deltaMillis?.let { formatDeltaSeconds(it) },
                 deltaColor = deltaMillis?.let {
                     when {
                         isGoldSplit -> GoldSplit
@@ -3137,6 +3145,7 @@ private fun BottomControls(
     showResetButton: Boolean,
     showUndoButton: Boolean,
     undoButtonEnabled: Boolean,
+    skipButtonEnabled: Boolean,
     requireHoldToReset: Boolean,
     invertBottomLayout: Boolean,
     sumOfBestText: String?,
@@ -3149,6 +3158,7 @@ private fun BottomControls(
     onSplit: () -> Unit,
     onReset: () -> Unit,
     onUndo: () -> Unit,
+    onSkip: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -3172,10 +3182,12 @@ private fun BottomControls(
                 showUndoButton = showUndoButton,
                 showResetButton = showResetButton,
                 undoButtonEnabled = undoButtonEnabled,
+                skipButtonEnabled = skipButtonEnabled,
                 resetButtonSize = resetButtonSize,
                 requireHoldToReset = requireHoldToReset,
                 onReset = onReset,
-                onUndo = onUndo
+                onUndo = onUndo,
+                onSkip = onSkip
             )
             Spacer(modifier = Modifier.width(12.dp))
             SplitButton(
@@ -3199,10 +3211,12 @@ private fun BottomControls(
                 showUndoButton = showUndoButton,
                 showResetButton = showResetButton,
                 undoButtonEnabled = undoButtonEnabled,
+                skipButtonEnabled = skipButtonEnabled,
                 resetButtonSize = resetButtonSize,
                 requireHoldToReset = requireHoldToReset,
                 onReset = onReset,
-                onUndo = onUndo
+                onUndo = onUndo,
+                onSkip = onSkip
             )
             Spacer(modifier = Modifier.weight(1f))
             RunTimerAndStats(
@@ -3225,10 +3239,12 @@ private fun SecondaryRunControls(
     showUndoButton: Boolean,
     showResetButton: Boolean,
     undoButtonEnabled: Boolean,
+    skipButtonEnabled: Boolean,
     resetButtonSize: ButtonSize,
     requireHoldToReset: Boolean,
     onReset: () -> Unit,
-    onUndo: () -> Unit
+    onUndo: () -> Unit,
+    onSkip: () -> Unit
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -3240,13 +3256,25 @@ private fun SecondaryRunControls(
         if (showUndoButton) {
             val secondaryButtonHeight = (resetButtonSize.height - 8.dp) / 2
             Column {
-                SplitButton(
-                    enabled = undoButtonEnabled,
-                    text = "UNDO",
-                    onSplit = onUndo,
-                    fontSize = 16.sp,
+                Row(
                     modifier = Modifier.size(resetButtonSize.width, secondaryButtonHeight)
-                )
+                ) {
+                    SplitButton(
+                        enabled = undoButtonEnabled,
+                        text = "UNDO",
+                        onSplit = onUndo,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    SplitButton(
+                        enabled = skipButtonEnabled,
+                        text = "SKIP",
+                        onSplit = onSkip,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 HoldToResetButton(
                     enabled = showResetButton,
@@ -4432,7 +4460,7 @@ private fun HistoricalRunSplitRow(
 ) {
     val segmentDuration = historicalSegmentDurationMillis(run, index)
     val splitDelta = split.comparisonSplitTimeMillis?.let {
-        split.splitTimeMillis - it
+        split.splitTimeMillis?.minus(it)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -4460,7 +4488,7 @@ private fun HistoricalRunSplitRow(
             modifier = Modifier.weight(1f)
         )
         Text(
-            text = formatSeconds(split.splitTimeMillis),
+            text = split.splitTimeMillis?.let { formatSeconds(it) } ?: "SKIP",
             color = PrimaryText,
             fontSize = 12.sp,
             lineHeight = 12.sp,
@@ -4469,7 +4497,7 @@ private fun HistoricalRunSplitRow(
             modifier = Modifier.width(70.dp)
         )
         Text(
-            text = formatSeconds(segmentDuration),
+            text = segmentDuration?.let { formatSeconds(it) } ?: "--",
             color = if (split.wasGold) GoldSplit else PrimaryText,
             fontSize = 12.sp,
             lineHeight = 12.sp,
@@ -4494,19 +4522,14 @@ private fun HistoricalRunSplitRow(
     Spacer(modifier = Modifier.height(6.dp))
 }
 
-private fun historicalSegmentDurationMillis(run: HistoricalRun, index: Int): Long {
-    val previousSplitTime = run.splits.getOrNull(index - 1)?.splitTimeMillis ?: 0L
-    return (run.splits[index].splitTimeMillis - previousSplitTime).coerceAtLeast(0L)
-}
+private fun historicalSegmentDurationMillis(run: HistoricalRun, index: Int): Long? =
+    isolatedSegmentDuration(run.splits.map { it.splitTimeMillis }, index)
 
 private fun historicalSegmentDeltaMillis(run: HistoricalRun, index: Int): Long? {
-    val currentSegmentDuration = historicalSegmentDurationMillis(run, index)
-    val comparisonSplitTime = run.splits[index].comparisonSplitTimeMillis ?: return null
-    val previousComparisonSplitTime = run.splits
-        .getOrNull(index - 1)
-        ?.comparisonSplitTimeMillis
-        ?: 0L
-    return currentSegmentDuration - (comparisonSplitTime - previousComparisonSplitTime)
+    val current = historicalSegmentDurationMillis(run, index) ?: return null
+    val comparison = isolatedSegmentDuration(run.splits.map { it.comparisonSplitTimeMillis }, index)
+        ?: return null
+    return current - comparison
 }
 
 @Composable
@@ -6345,21 +6368,7 @@ private fun liveActiveSplitDeltaMillis(
     completedTimes: List<Long?>,
     runComparison: Run?
 ): Long? {
-    val comparisonTime = runComparison?.splitTimes?.getOrNull(activeSplitIndex) ?: return null
-    val currentDelta = elapsedMillis - comparisonTime
-    if (currentDelta > 0L) {
-        return currentDelta
-    }
-
-    val segmentStartDelta = if (activeSplitIndex == 0) {
-        0L
-    } else {
-        val previousCompletedTime = completedTimes.getOrNull(activeSplitIndex - 1) ?: return null
-        val previousComparisonTime = runComparison.splitTimes.getOrNull(activeSplitIndex - 1) ?: return null
-        previousCompletedTime - previousComparisonTime
-    }
-
-    return currentDelta.takeIf { it > segmentStartDelta }
+    return liveSplitDelta(elapsedMillis, activeSplitIndex, completedTimes, runComparison?.splitTimes)
 }
 
 @Composable
