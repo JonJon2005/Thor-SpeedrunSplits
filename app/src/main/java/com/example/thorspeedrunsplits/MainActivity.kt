@@ -279,6 +279,7 @@ private const val OledScreenShiftPreferenceKey = "oled_screen_shift"
 private const val RequireHoldToResetPreferenceKey = "require_hold_to_reset"
 private const val InvertBottomLayoutPreferenceKey = "invert_bottom_layout"
 private const val FontPreferenceKey = "font_mode"
+private const val ApplyFontInSettingsPreferenceKey = "apply_font_in_settings"
 private const val StartCountdownPreferenceKey = "start_countdown_seconds"
 private const val TimePrecisionPreferenceKey = "time_precision"
 private const val RecordingFolderPreferenceKey = "recording_folder_uri"
@@ -1142,6 +1143,7 @@ private fun ThorSpeedrunSplitsContent() {
     var invertBottomLayout by remember { mutableStateOf(false) }
     var oledScreenShiftIndex by remember { mutableStateOf(0) }
     var selectedFontMode by remember { mutableStateOf(AppFontMode.Default) }
+    var applyFontInSettings by remember { mutableStateOf(true) }
     var timePrecision by remember { mutableStateOf(TimePrecision.Tenths) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var settingsSection by remember { mutableStateOf(SettingsSection.Customization) }
@@ -1687,6 +1689,7 @@ private fun ThorSpeedrunSplitsContent() {
             ?.toIntOrNull()
             ?.takeIf { it == LowerRecordingFrameRate || it == DefaultRecordingFrameRate }
             ?: DefaultRecordingFrameRate
+        applyFontInSettings = appPreferenceDao.getValue(ApplyFontInSettingsPreferenceKey) != "false"
         selectedFontMode = AppFontMode.fromStorageValue(
             appPreferenceDao.getValue(FontPreferenceKey)
         )
@@ -2197,6 +2200,15 @@ private fun ThorSpeedrunSplitsContent() {
                     },
                     requireHoldToReset = requireHoldToReset,
                     invertBottomLayout = invertBottomLayout,
+                    applyFontInSettings = applyFontInSettings,
+                    onApplyFontInSettingsChange = { enabled ->
+                        applyFontInSettings = enabled
+                        coroutineScope.launch {
+                            appPreferenceDao.upsert(
+                                AppPreferenceEntity(ApplyFontInSettingsPreferenceKey, enabled.toString())
+                            )
+                        }
+                    },
                     selectedFontMode = selectedFontMode,
                     updateCheckState = updateCheckState,
                     onOpenRelease = ::openReleasePage,
@@ -2745,14 +2757,16 @@ private fun ThorSpeedrunSplitsContent() {
             ) {
                 val presetToDelete = presetPendingDelete
                 if (presetToDelete != null) {
-                    DeletePresetConfirmationDialog(
-                        onCancel = { presetPendingDelete = null },
-                        onConfirm = {
-                            presetPendingDelete = null
-                            deletePreset(presetToDelete)
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    SettingsFontScope(applyFontInSettings) {
+                        DeletePresetConfirmationDialog(
+                            onCancel = { presetPendingDelete = null },
+                            onConfirm = {
+                                presetPendingDelete = null
+                                deletePreset(presetToDelete)
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
 
@@ -3474,6 +3488,8 @@ private fun SettingsPanel(
     requireHoldToReset: Boolean,
     invertBottomLayout: Boolean,
     selectedFontMode: AppFontMode,
+    applyFontInSettings: Boolean,
+    onApplyFontInSettingsChange: (Boolean) -> Unit,
     startCountdownSeconds: Int,
     onStartCountdownChange: (Int) -> Unit,
     timePrecision: TimePrecision,
@@ -3543,6 +3559,7 @@ private fun SettingsPanel(
     onResetDefault: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    SettingsFontScope(applyFontInSettings) {
     val settingsListState = rememberLazyListState()
     var selectedHistoricalRunId by remember(activePreset.presetName) {
         mutableStateOf<Long?>(null)
@@ -3622,6 +3639,8 @@ private fun SettingsPanel(
                     selectedFontMode = selectedFontMode,
                     onSelectedFontModeChange = onSelectedFontModeChange
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                ApplyFontInSettingsToggle(applyFontInSettings, onApplyFontInSettingsChange)
                 Spacer(modifier = Modifier.height(20.dp))
                 SettingsSectionTitle("Run Controls", Icons.Filled.Refresh)
                 StartCountdownInput(startCountdownSeconds, onStartCountdownChange)
@@ -4032,6 +4051,7 @@ private fun SettingsPanel(
             }
         }
     }
+}
 }
 
 @Composable
@@ -5565,6 +5585,33 @@ private fun TimePrecisionToggle(
             color = SecondaryText,
             fontSize = 13.sp
         )
+    }
+}
+
+@Composable
+private fun SettingsFontScope(applySelectedFont: Boolean, content: @Composable () -> Unit) {
+    val family = if (applySelectedFont) LocalAppFontFamily.current else FontFamily.Default
+    CompositionLocalProvider(
+        LocalAppFontFamily provides family,
+        LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = family),
+        content = content
+    )
+}
+
+@Composable
+private fun ApplyFontInSettingsToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().height(48.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "Apply Font in Settings", color = PrimaryText, fontSize = 15.sp)
+            Text(
+                text = if (enabled) "Selected font throughout the app" else "Selected font on home screen only",
+                color = SecondaryText, fontSize = 11.sp, lineHeight = 13.sp
+            )
+        }
+        SettingsSwitch(checked = enabled, onCheckedChange = onEnabledChange)
     }
 }
 

@@ -28,7 +28,7 @@ You can add it to <b>Obtainium</b> here:
 - Skip intermediate splits without inventing times; Undo reverses skips, history marks skipped rows, and backups preserve them while older runs and backups remain readable. The final split must be timed; skipped/combined segments cannot earn golds.
 - Validated multi-preset `.thorbackup.json` export/import through Android's file picker, including definitions, PBs, golds, stats, and history with repeat-safe merging and conflict protection.
 - Collapsible icon-based settings drawer with sticky section headers for Customization, Presets, Runs & Records, Recording, Backup & Data, and About.
-- Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat.
+- Light, Dark, and OLED themes, optional Android system-theme following, toggleable OLED screen shifting, and six font choices: Default, Pixel, Pixel Bold, Princess, Breathe, and Red Hat. A saved toggle applies the selected font to settings too, or limits it to the home screen.
 - Automatic GitHub release checks with an in-app `Update Now` link, About links, version display, and internal/external display status for dual-screen devices.
 - Run recording of Android's internal/default display: starts with a run, keeps a three-second post-run tail, and saves an MP4 to app storage or a persistent custom folder using the preset game, category, run length, and date; optionally discard reset/abandoned-run recordings.
 - Optional opposite-screen recording target and internal playback-audio capture (device playback, not microphone input), plus a flashing red recording indicator while capture is active.
