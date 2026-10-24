@@ -66,7 +66,7 @@ data class CompletedRunSplitEntity(
     val runId: Long,
     val position: Int,
     val segmentName: String,
-    val splitTimeMillis: Long,
+    val splitTimeMillis: Long?,
     val comparisonSplitTimeMillis: Long?,
     val wasGold: Boolean
 )
@@ -276,7 +276,7 @@ class LongListConverters {
         SplitPresetSegmentEntity::class,
         AppPreferenceEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(LongListConverters::class)
@@ -407,6 +407,30 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Rebuild only the child table to allow skipped (NULL) split times.
+                // Existing times, comparison snapshots, golds, and run IDs are copied intact.
+                db.execSQL("""
+                    CREATE TABLE `completed_run_splits_new` (
+                        `runId` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `segmentName` TEXT NOT NULL,
+                        `splitTimeMillis` INTEGER,
+                        `comparisonSplitTimeMillis` INTEGER,
+                        `wasGold` INTEGER NOT NULL,
+                        PRIMARY KEY(`runId`, `position`),
+                        FOREIGN KEY(`runId`) REFERENCES `completed_runs`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("INSERT INTO completed_run_splits_new SELECT * FROM completed_run_splits")
+                db.execSQL("DROP TABLE completed_run_splits")
+                db.execSQL("ALTER TABLE completed_run_splits_new RENAME TO completed_run_splits")
+                db.execSQL("CREATE INDEX index_completed_run_splits_runId ON completed_run_splits (runId)")
+            }
+        }
+
         fun getInstance(context: Context): ThorSpeedrunDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -419,7 +443,8 @@ abstract class ThorSpeedrunDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
-                        MIGRATION_5_6
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
                     )
                     .build()
                     .also { instance = it }

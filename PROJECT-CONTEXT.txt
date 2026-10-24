@@ -4,13 +4,14 @@ Thor Speedrun Splits - Project Context
 Purpose
 -------
 - Build an open-source Android app for Thor speedrun split tracking.
-- Current app state: Compose prototype with LiveSplit-like rows, manual split/undo controls, one-decimal timer, Room-backed split preset creation/loading, PB comparison, completed-run history/details, and JSON backup/restore.
+- Current app state: Compose prototype with LiveSplit-like rows, manual split/undo controls, configurable-precision timer, Room-backed split preset creation/loading, PB comparison, completed-run history/details, and JSON backup/restore.
 
 Workflow Rule
 -------------
 - Before starting future work in this repository, read this file first.
 - After each meaningful user request, update this file with new product direction, design language, technical decisions, and implementation status.
 - Keep this file concise and factual. Prefer durable project context over transient command logs.
+- Commit messages must follow the user's format: `[TYPE] - Description`, using tags such as `[FEAT]`, `[FIX]`, `[DOCS]`, and `[APK]` to match the change.
 
 Product Direction
 -----------------
@@ -43,8 +44,8 @@ Design Language
   - OLED-friendly near-black background.
   - Fixed dark system bars and Compose dark theme with dynamic color disabled.
   - App runs in immersive fullscreen: Android status bar and navigation/swipe bar should be hidden because the AYN Thor has physical/back-home controls available for this use case.
-  - Timer and split times use one decimal place without a seconds suffix.
-  - Timing displays should omit the minutes column until it is reached: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
+  - Timer and split times use the persisted Time precision setting: Whole, Tenths (default), or Hundredths, without a seconds suffix. Display values truncate at the selected precision; stored milliseconds remain unchanged.
+  - Timing displays should omit the minutes column until it is reached; examples at the default tenths precision: under one minute shows `0.0`, one minute and above shows `1:00.0`, and one hour and above shows `1:00:00.0`.
   - Right-aligned split time and delta columns must reserve enough width for wider custom font numerals so decimal digits are not clipped.
   - Split rows, bottom controls, and timer must live in separate layout regions so the `SPLIT` button and timer never overlap split rows.
   - Long game/category title text should scale down and ellipsize within the title region instead of overlapping stats, settings, or split rows.
@@ -104,7 +105,7 @@ Core Features
   - Settings includes a Backup tab where users can include one or more presets, select all, or clear the selection before exporting.
   - Starting a backup opens Android's system folder picker. The app writes one timestamped bundle named like `thor_speedrun_splits_backup_YYYYMMDD_HHMMSS.thorbackup.json` into the chosen folder.
   - Backup bundles include each selected preset's name, game/category, ordered split names and marker colors, attempted/total-time stats, PB, best segments/golds, and completed-run history with its saved comparison/gold snapshots.
-  - Backup JSON uses format identifier `thor-speedrun-splits-backup` and schema version 1. It intentionally excludes Room primary keys so a future importer can validate the version and insert restored runs with new local IDs.
+  - Backup JSON uses format identifier `thor-speedrun-splits-backup` and schema version 2, with imports supporting versions 1 and 2. History uses explicit null split times for skipped boundaries; legacy version 1 times remain numeric. Room primary keys are excluded so imported runs get new local IDs.
   - Backup bundles record the active preset when it is included. The Backup tab can import `.thorbackup.json` through Android's system file picker; after import, the backed-up active preset becomes the loaded preset, or the first bundle preset is used for older bundles without that field.
   - Import validates the format/schema, required fields, split ordering/counts, nonnegative and cumulative times, duplicate preset names, and a 25 MB size limit before beginning a Room transaction.
   - Import is additive and repeat-safe: an identical same-name preset merges using the better PB, per-row fastest gold, larger stats snapshot, and deduplicated history. A same-name preset with a different definition receives an available `(Imported)` name instead of overwriting local data.
@@ -141,9 +142,9 @@ Core Features
 - Run/PB direction from user:
   - Add a separate `Run` data type for completed attempts.
   - Runs were temporarily/in-memory first; PBs now persist through Room so saved PBs survive closing/reopening the app.
-  - A run is saved only when all splits are completed.
+  - A run is saved when the final split is timed; intermediate splits may be explicitly skipped and retain unknown timestamps.
   - Current implementation stores the best completed run per preset as that preset's Room-backed personal best.
-  - Every completed run is also appended to Room-backed history independently of whether it becomes a PB; unfinished and reset runs are not added.
+  - Every completed run is also appended to Room-backed history independently of whether it becomes a PB; intermediate skips are preserved, while unfinished and reset runs are not added.
   - If a loaded preset has no saved run/PB, right-side split comparison times show `--`.
   - If a loaded preset has a saved run/PB, right-side split comparison times show that saved run's split times.
   - If a split row has no saved PB time, completing that split during the current run temporarily shows the current run's split time in that row; resetting an unfinished run returns it to `--`.
@@ -174,9 +175,10 @@ Technical Notes
 - Gradle wrapper is included.
 - Repository: https://github.com/JonJon2005/Thor-SpeedrunSplits
 - License: MIT.
-- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.6.1"` and `versionCode = 9`.
+- App version metadata is exposed through generated `BuildConfig`; current configured version is `versionName = "0.7"` and `versionCode = 10`.
 - Launcher icons are app resources under `app/src/main/res/mipmap-*` and `app/src/main/res/mipmap-anydpi-v26`; the manifest uses `@mipmap/ic_launcher` for both `android:icon` and `android:roundIcon`. The 512px store/release icon is kept at `docs/images/play_store_512.png`.
-- Target hardware context: AYN Thor bottom screen, 1080x1240 aspect, 3.92 inch AMOLED, 60 Hz.
+- Target hardware context: AYN Thor bottom screen, 1240x1080 pixels in landscape, 3.92 inch AMOLED, 60 Hz.
+- Compose UI uses FixedAppScale: raw window pixel constraints determine a uniform density relative to the real Thor bottom display baseline of 1240x1080 pixels at 369 logical DPI (about 538x468 dp), measured over wireless ADB with no density override. Font scale is fixed at 1.0; Android font-size and display-size preferences do not resize the app UI. Existing layout structure and custom font/precision selections remain intact. System dialogs and keyboard retain system scaling.
 - System UI: hide Android status and navigation bars; reapply immersive mode on resume/focus.
 - Haptics: use Android `Vibrator`/`VibratorManager` with a subtle tick effect for button presses; app declares the normal `android.permission.VIBRATE` permission.
 - Updater: app declares `android.permission.INTERNET`, automatically calls GitHub's latest release API at `https://api.github.com/repos/JonJon2005/Thor-SpeedrunSplits/releases/latest` on app launch, compares the release tag to `BuildConfig.VERSION_NAME`, and opens the release page in an external browser instead of downloading/installing APKs in-app.
@@ -347,3 +349,14 @@ Change Log
 - 2026-10-09: Added a live home-screen current-segment timer alongside the overall timer; it resets on each split, follows undo changes, and retains the final segment duration after a completed run.
 - 2026-10-09: Linked completed-run history to matching MP4 files in the active recording location using the stable game/category/run-duration filename prefix; history rows now show `VIEW RUN` when a video is found or `NO VIDEO` otherwise, opening the file through Android's external viewer.
 - [APK] v0.6.1 released
+- 2026-10-19: Created a fresh `v0.7` development branch from updated `main` (including merged v0.6.1), bumped app metadata to versionName 0.7/versionCode 10.
+- 2026-10-19: Added a persisted Time precision selector under Customization with Whole, Tenths, and Hundredths choices and a live example. Applies to overall/segment timers, split comparisons and deltas, run history, records, and duration stats. Added formatting tests for truncation and minute/hour boundaries.
+- 2026-10-19: Added fixed app-wide Compose density at the measured real Thor baseline of 369 DPI and font scale 1.0, preserving existing layout structure regardless of user font/display scaling. No size options were added. Scaling follows window pixel size and handles rotation and window resizing.
+- 2026-10-19: Added a persisted Start offset (seconds) field under Customization / Run Controls. A fixed minus prefix and numeric keyboard accept whole-second countdowns from 0 to 3600; SAVE applies to the next run and 0 disables it. Timer starts negative and passes through zero automatically; splitting is blocked before zero. Countdown is excluded from run/segment/PB/gold times and total-time stats; recording begins at countdown start.
+- 2026-10-23: Widened the shared Undo/Reset control column by 25%, preserving button heights, the vertical stack, and the Split button size in both normal and inverted layouts. Skip is not implemented yet. Do not commit further changes until the user explicitly requests it.
+- 2026-10-23: Split the widened top secondary-control row into equal-width Undo (left) and Skip (right) buttons with an 8dp gap, keeping full-width Reset below. Undo retains its behavior; Skip is a visual placeholder with no run-state action pending UI approval. Nothing should be committed until requested.
+- 2026-10-23: Increased only the bottom control heights to fill the existing band with 12dp above, retaining original bottom alignment, bottom/side margins, widths, and inner gaps. Split is taller; the Undo/Skip row and Reset each share the increased secondary column height. Timer/stats stay in place. Applies to normal and inverted layouts.
+- 2026-10-23: Implemented Skip alongside Undo. Skip advances without a timestamp; Undo reverses a skip. Disabled during countdown and on the final split, which must be timed to finish. Live/history skipped rows show SKIP, unknown individual segment durations show --, and combined segments cannot earn golds. PBs use finish time (more timed rows only breaks ties), including backup merges. Room v7 migrates the v6 history child table to nullable times while preserving old runs; PB storage retains its existing -1 sentinel for untimed boundaries. Backup schema v2 exports null skipped timestamps, imports v1/v2, validates timed boundaries across skips, and keeps repeat-import deduplication. Unit tests cover old/new backup round-trips, validation, comparison timing and PB selection; an isolated emulator upgrade test verifies old records, preferences, stats and skipped inserts. Changes remain uncommitted until requested.
+- 2026-10-23: Added a persisted Apply Font in Settings toggle directly below the font selector, default on to preserve existing behavior. Off uses the system font for all settings sections, drawer, forms, and preset delete confirmation while the home screen keeps the selected font. Font-choice buttons still preview their own typefaces and update-status text retains its existing system-font rule. No commit until requested.
+- 2026-10-23: Replaced the repository v0.6.1 APK with the user-provided signed `Thor-SpeedrunSplits_v0.7.apk`; verified package version 0.7/versionCode 10 and APK signature.
+- [APK] v0.7 released
